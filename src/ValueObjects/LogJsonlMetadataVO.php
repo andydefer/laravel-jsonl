@@ -25,7 +25,7 @@ final class LogJsonlMetadataVO extends AbstractValueObject
 
     public function __construct(LogJsonlRecord $record)
     {
-        $this->key = $record->time->getValue() . ':' . $record->type;
+        $this->key = $record->time->getValue().':'.$record->type;
         $this->timestamp = $record->time;
         $this->date = $record->time->format('Y-m-d');
         $this->hour = $record->time->format('H');

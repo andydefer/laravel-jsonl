@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace AndyDefer\LaravelJsonl\Queries;
+namespace AndyDefer\LaravelJsonl\Records;
 
 use AndyDefer\DomainStructures\Abstracts\AbstractRecord;
 

@@ -7,8 +7,8 @@ namespace AndyDefer\LaravelJsonl\Strategies;
 use AndyDefer\DomainStructures\Abstracts\AbstractRecord;
 use AndyDefer\DomainStructures\Enums\PhpType;
 use AndyDefer\LaravelJsonl\Contracts\JsonlPathStrategyInterface;
-use AndyDefer\LaravelJsonl\Queries\CacheKeyQueryRecord;
 use AndyDefer\LaravelJsonl\Records\CacheJsonlRecord;
+use AndyDefer\LaravelJsonl\Records\CacheKeyQueryRecord;
 use AndyDefer\LaravelJsonl\ValueObjects\CacheJsonlMetadataVO;
 
 class KeyBasedPathStrategy implements JsonlPathStrategyInterface
@@ -30,7 +30,7 @@ class KeyBasedPathStrategy implements JsonlPathStrategyInterface
 
         $pathParts = [rtrim($this->basePath, DIRECTORY_SEPARATOR)];
         $pathParts[] = $metadata->getHashLevels()->getValue();
-        $pathParts[] = $metadata->getSafeKey()->getValue() . '.jsonl';
+        $pathParts[] = $metadata->getSafeKey()->getValue().'.jsonl';
 
         return implode(DIRECTORY_SEPARATOR, $pathParts);
     }

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace AndyDefer\PhpServices\Tests;
+namespace AndyDefer\LaravelJsonl\Tests;
 
 use AndyDefer\PhpServices\PhpServiceServiceProvider;
 use Orchestra\Testbench\TestCase as Orchestra;

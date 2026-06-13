@@ -6,8 +6,8 @@ namespace AndyDefer\LaravelJsonl\Strategies;
 
 use AndyDefer\DomainStructures\Abstracts\AbstractRecord;
 use AndyDefer\LaravelJsonl\Contracts\JsonlPathStrategyInterface;
-use AndyDefer\LaravelJsonl\Queries\TemporalLogQueryRecord;
 use AndyDefer\LaravelJsonl\Records\LogJsonlRecord;
+use AndyDefer\LaravelJsonl\Records\TemporalLogQueryRecord;
 use AndyDefer\LaravelJsonl\ValueObjects\LogJsonlMetadataVO;
 
 class TemporalPathStrategy implements JsonlPathStrategyInterface
@@ -29,7 +29,7 @@ class TemporalPathStrategy implements JsonlPathStrategyInterface
         return implode(DIRECTORY_SEPARATOR, [
             rtrim($this->basePath, DIRECTORY_SEPARATOR),
             $metadata->getDate(),
-            $metadata->getHour() . '.jsonl',
+            $metadata->getHour().'.jsonl',
         ]);
     }
 
@@ -51,7 +51,7 @@ class TemporalPathStrategy implements JsonlPathStrategyInterface
 
             for ($hour = 0; $hour <= 23; $hour++) {
                 $hourStr = str_pad((string) $hour, 2, '0', STR_PAD_LEFT);
-                $files[] = implode(DIRECTORY_SEPARATOR, [$path, $hourStr . '.jsonl']);
+                $files[] = implode(DIRECTORY_SEPARATOR, [$path, $hourStr.'.jsonl']);
             }
 
             $current = $current->modify('+1 day');

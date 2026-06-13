@@ -58,10 +58,10 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
 
             $data = $this->prepareDataForWrite($entity);
 
-            $jsonLine = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n";
+            $jsonLine = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n";
 
             if ($jsonLine === false) {
-                throw new JsonlException('Failed to encode JSON: ' . json_last_error_msg());
+                throw new JsonlException('Failed to encode JSON: '.json_last_error_msg());
             }
 
             $this->ensureDirectoryExists($filePath);
@@ -109,7 +109,7 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
             ];
         }
 
-        throw new JsonlException('Unsupported record type: ' . get_class($entity));
+        throw new JsonlException('Unsupported record type: '.get_class($entity));
     }
 
     public function writeBatch(array $entities, bool $lock = true, ?JsonlProcessingContext $context = null): void
@@ -131,7 +131,7 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
                 $content = '';
                 foreach ($entities as $entity) {
                     $data = $this->prepareDataForWrite($entity);
-                    $content .= json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n";
+                    $content .= json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n";
                 }
                 $this->fileSystem->append($filePath, $content);
                 $context->addWrittenLines($filePath, count($entities));
@@ -181,7 +181,7 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
                 $content = '';
                 foreach ($this->buffer[$filePath] as $entity) {
                     $data = $this->prepareDataForWrite($entity);
-                    $content .= json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n";
+                    $content .= json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n";
                 }
                 $this->fileSystem->append($filePath, $content);
                 $count = count($this->buffer[$filePath]);
@@ -317,7 +317,7 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         $content = $this->fileSystem->get($filePath);
         $lines = explode("\n", trim($content));
 
-        $lines = array_filter($lines, fn($line) => trim($line) !== '');
+        $lines = array_filter($lines, fn ($line) => trim($line) !== '');
 
         if (empty($lines)) {
             return null;
@@ -360,7 +360,7 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         $cutoffTime = time() - ($days * 86400);
         $deletedCount = 0;
 
-        $pattern = rtrim($basePath, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . '**' . DIRECTORY_SEPARATOR . '*.jsonl';
+        $pattern = rtrim($basePath, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'**'.DIRECTORY_SEPARATOR.'*.jsonl';
         $files = $this->fileSystem->glob($pattern);
 
         foreach ($files as $file) {
@@ -383,12 +383,23 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         $context->setCurrentOperation(OperationType::CLEANING_EXPIRED);
 
         $deletedCount = 0;
-        $pattern = rtrim($basePath, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . '**' . DIRECTORY_SEPARATOR . '*.jsonl';
-        $files = $this->fileSystem->glob($pattern);
 
-        foreach ($files as $file) {
-            $this->executeWithLock($file, function () use ($file, $isExpired, &$deletedCount, $context) {
-                $lines = $this->readAll($file, $context);
+        // Utilisation de RecursiveIterator pour une recherche récursive compatible tous systèmes
+        if (! is_dir($basePath)) {
+            $context->complete();
+
+            return 0;
+        }
+
+        $directory = new \RecursiveDirectoryIterator($basePath, \RecursiveDirectoryIterator::SKIP_DOTS);
+        $iterator = new \RecursiveIteratorIterator($directory);
+        $regex = new \RegexIterator($iterator, '/\.jsonl$/i');
+
+        foreach ($regex as $file) {
+            $filePath = $file->getPathname();
+
+            $this->executeWithLock($filePath, function () use ($filePath, $isExpired, &$deletedCount, $context) {
+                $lines = $this->readAll($filePath, $context);
                 $validLines = [];
 
                 foreach ($lines as $line) {
@@ -401,10 +412,10 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
 
                 if (count($validLines) !== count($lines)) {
                     if (empty($validLines)) {
-                        $this->fileSystem->delete($file);
-                        $context->addProcessedFile($file);
+                        $this->fileSystem->delete($filePath);
+                        $context->addProcessedFile($filePath);
                     } else {
-                        $this->rewriteFile($file, $validLines);
+                        $this->rewriteFile($filePath, $validLines);
                     }
                 }
             });
@@ -441,7 +452,7 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         $context->setCurrentOperation(OperationType::DRY_RUN);
 
         $filesToDelete = [];
-        $pattern = rtrim($basePath, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . '**' . DIRECTORY_SEPARATOR . '*.jsonl';
+        $pattern = rtrim($basePath, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'**'.DIRECTORY_SEPARATOR.'*.jsonl';
         $files = $this->fileSystem->glob($pattern);
 
         foreach ($files as $file) {
@@ -458,7 +469,7 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
 
     public function clear(string $basePath, ?JsonlProcessingContext $context = null): int
     {
-        $pattern = rtrim($basePath, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . '**' . DIRECTORY_SEPARATOR . '*.jsonl';
+        $pattern = rtrim($basePath, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'**'.DIRECTORY_SEPARATOR.'*.jsonl';
 
         return $this->cleanByPattern($pattern, $context);
     }
@@ -476,7 +487,7 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         }
 
         $startTime = microtime(true);
-        $lockFile = $filePath . '.lock';
+        $lockFile = $filePath.'.lock';
 
         while (true) {
             if (! $this->fileSystem->exists($lockFile)) {
@@ -571,11 +582,11 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
 
     private function rewriteFile(string $filePath, array $lines): void
     {
-        $tempFile = $filePath . '.tmp';
+        $tempFile = $filePath.'.tmp';
 
         $content = '';
         foreach ($lines as $line) {
-            $content .= json_encode($line, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n";
+            $content .= json_encode($line, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n";
         }
 
         $this->fileSystem->put($tempFile, $content);
