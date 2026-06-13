@@ -6,6 +6,7 @@ namespace AndyDefer\LaravelJsonl;
 
 use AndyDefer\DomainStructures\Abstracts\AbstractRecord;
 use AndyDefer\DomainStructures\Utils\StrictDataObject;
+use AndyDefer\LaravelJsonl\Contexts\JsonlContext;
 use AndyDefer\LaravelJsonl\Contexts\JsonlProcessingContext;
 use AndyDefer\LaravelJsonl\Contracts\JsonlCleanerInterface;
 use AndyDefer\LaravelJsonl\Contracts\JsonlLockInterface;
@@ -27,34 +28,17 @@ use Throwable;
 /**
  * Main service for JSONL (JSON Lines) storage operations.
  *
- * Provides write, read, search, clean, and lock capabilities for JSONL files.
- * Supports buffered writes, concurrent access with file locking, and
- * configurable path strategies for different use cases (logs, cache, etc.).
+ * This service is stateless. All state (locks, buffer) is managed
+ * through the injected JsonlContext.
  *
  * @author Andy Defer
  */
 final class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlReaderInterface, JsonlWriterInterface
 {
-    /** @var array<string, JsonlLockVO> */
-    private array $locks = [];
-
-    /** @var array<string, array<AbstractRecord>> */
-    private array $buffer = [];
-
-    private int $bufferSize = 0;
-
-    /** @var callable(string, int):void|null */
-    private $onFlushCallback = null;
-
-    /**
-     * @param  JsonlPathStrategyInterface  $pathStrategy  Strategy for file path generation
-     * @param  FileSystemInterface  $fileSystem  File system operations
-     * @param  int|null  $defaultBufferSize  Default buffer size (null = disabled)
-     * @param  PermissionMode  $directoryPermission  Permission mode for created directories
-     */
     public function __construct(
         private JsonlPathStrategyInterface $pathStrategy,
         private readonly FileSystemInterface $fileSystem,
+        private readonly JsonlContext $context,
         private readonly ?int $defaultBufferSize = null,
         private readonly PermissionMode $directoryPermission = PermissionMode::DIRECTORY,
     ) {
@@ -150,21 +134,18 @@ final class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, J
      */
     public function writeBuffered(AbstractRecord $entity, ?JsonlProcessingContext $context = null): void
     {
-        if ($this->bufferSize === 0) {
+        if (! $this->context->isBufferEnabled()) {
             $this->write($entity, true, $context);
 
             return;
         }
 
         $filePath = $this->pathStrategy->getFilePath($entity);
+        $this->context->addToBuffer($filePath, $entity);
 
-        if (! isset($this->buffer[$filePath])) {
-            $this->buffer[$filePath] = [];
-        }
+        $buffer = $this->context->getFileBuffer($filePath);
 
-        $this->buffer[$filePath][] = $entity;
-
-        if (count($this->buffer[$filePath]) >= $this->bufferSize) {
+        if (count($buffer) >= $this->context->getBufferSize()) {
             $this->flushBuffer($filePath, $context);
         }
     }
@@ -182,7 +163,7 @@ final class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, J
             return;
         }
 
-        foreach (array_keys($this->buffer) as $path) {
+        foreach (array_keys($this->context->getBuffer()) as $path) {
             $this->flushSingleBuffer($path, $context);
         }
     }
@@ -192,7 +173,7 @@ final class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, J
      */
     public function enableBuffer(int $size = 100): void
     {
-        $this->bufferSize = $size;
+        $this->context->setBufferSize($size);
     }
 
     /**
@@ -201,7 +182,7 @@ final class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, J
     public function disableBuffer(): void
     {
         $this->flushBuffer();
-        $this->bufferSize = 0;
+        $this->context->setBufferSize(0);
     }
 
     /**
@@ -209,7 +190,23 @@ final class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, J
      */
     public function onFlush(callable $callback): void
     {
-        $this->onFlushCallback = $callback;
+        $this->context->setOnFlushCallback($callback);
+    }
+
+    /**
+     * Check if buffering is currently enabled.
+     */
+    public function isBufferEnabled(): bool
+    {
+        return $this->context->isBufferEnabled();
+    }
+
+    /**
+     * Get the current buffer size.
+     */
+    public function getBufferSize(): int
+    {
+        return $this->context->getBufferSize();
     }
 
     // ============================================================
@@ -504,7 +501,7 @@ final class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, J
     {
         $lockKey = $this->getLockKey($filePath);
 
-        if (isset($this->locks[$lockKey]) && $this->locks[$lockKey]->isAcquired()) {
+        if ($this->context->hasLock($lockKey)) {
             return true;
         }
 
@@ -514,7 +511,7 @@ final class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, J
         while (true) {
             if (! $this->fileSystem->exists($lockFile)) {
                 $this->fileSystem->put($lockFile, (string) getmypid());
-                $this->locks[$lockKey] = new JsonlLockVO(null, $lockFile);
+                $this->context->addLock($lockKey, new JsonlLockVO(null, $lockFile));
 
                 return true;
             }
@@ -533,11 +530,11 @@ final class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, J
     public function release(string $filePath): void
     {
         $lockKey = $this->getLockKey($filePath);
+        $lock = $this->context->getLock($lockKey);
 
-        if (isset($this->locks[$lockKey])) {
-            $lock = $this->locks[$lockKey];
+        if ($lock !== null) {
             $this->fileSystem->delete($lock->getLockFilePath());
-            unset($this->locks[$lockKey]);
+            $this->context->removeLock($lockKey);
         }
     }
 
@@ -562,7 +559,7 @@ final class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, J
     {
         $lockKey = $this->getLockKey($filePath);
 
-        return isset($this->locks[$lockKey]) && $this->locks[$lockKey]->isAcquired();
+        return $this->context->hasLock($lockKey);
     }
 
     // ============================================================
@@ -586,9 +583,23 @@ final class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, J
     }
 
     /**
+     * Returns the base directory from the path strategy.
+     */
+    public function getBaseDirectory(): string
+    {
+        return $this->pathStrategy->getBaseDirectory();
+    }
+
+    /**
+     * Check if a file exists.
+     */
+    public function fileExists(string $filePath): bool
+    {
+        return $this->fileSystem->exists($filePath);
+    }
+
+    /**
      * Changes the path strategy at runtime.
-     *
-     * Useful for testing or switching behavior dynamically.
      */
     public function setPathStrategy(JsonlPathStrategyInterface $pathStrategy): void
     {
@@ -607,9 +618,6 @@ final class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, J
 
     /**
      * Decodes a cached value back to a StrictDataObject.
-     *
-     * @param  string  $encodedValue  JSON encoded value
-     * @param  string  $typeString  Original PHP type (unused, kept for API compatibility)
      */
     public function decodeCacheValue(string $encodedValue, string $typeString): StrictDataObject
     {
@@ -671,11 +679,6 @@ final class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, J
 
     /**
      * Encodes data to a JSON line with newline terminator.
-     *
-     * @param  array<string, mixed>  $data  Data to encode
-     * @return string JSON line with trailing newline
-     *
-     * @throws JsonlException If JSON encoding fails
      */
     private function encodeToJsonLine(array $data): string
     {
@@ -705,26 +708,25 @@ final class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, J
      */
     private function flushSingleBuffer(string $filePath, JsonlProcessingContext $context): void
     {
-        if (empty($this->buffer[$filePath])) {
+        $buffer = $this->context->getFileBuffer($filePath);
+
+        if (empty($buffer)) {
             return;
         }
 
         $content = '';
 
-        foreach ($this->buffer[$filePath] as $entity) {
+        foreach ($buffer as $entity) {
             $data = $this->prepareDataForWrite($entity);
             $content .= $this->encodeToJsonLine($data);
         }
 
         $this->fileSystem->append($filePath, $content);
-        $count = count($this->buffer[$filePath]);
+        $count = count($buffer);
         $context->addWrittenLines($filePath, $count);
 
-        $this->buffer[$filePath] = [];
-
-        if ($this->onFlushCallback !== null) {
-            call_user_func($this->onFlushCallback, $filePath, $count);
-        }
+        $this->context->clearFileBuffer($filePath);
+        $this->context->triggerOnFlush($filePath, $count);
     }
 
     /**

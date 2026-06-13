@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AndyDefer\LaravelJsonl\Tests\Unit;
 
 use AndyDefer\DomainStructures\Utils\StrictDataObject;
+use AndyDefer\LaravelJsonl\Contexts\JsonlContext;
 use AndyDefer\LaravelJsonl\Contexts\JsonlProcessingContext;
 use AndyDefer\LaravelJsonl\Enums\OperationType;
 use AndyDefer\LaravelJsonl\Exceptions\JsonlException;
@@ -33,6 +34,8 @@ final class JsonlServiceTest extends UnitTestCase
 
     private KeyBasedPathStrategy $keyBasedStrategy;
 
+    private JsonlContext $context;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -40,6 +43,50 @@ final class JsonlServiceTest extends UnitTestCase
         $this->fileSystem = $this->createMock(FileSystemInterface::class);
         $this->temporalStrategy = new TemporalPathStrategy(self::BASE_PATH);
         $this->keyBasedStrategy = new KeyBasedPathStrategy(self::BASE_PATH, 2);
+        $this->context = new JsonlContext;
+    }
+
+    // ============================================================
+    // Helpers pour créer des services
+    // ============================================================
+
+    private function createTemporalService(): JsonlService
+    {
+        return new JsonlService(
+            pathStrategy: $this->temporalStrategy,
+            fileSystem: $this->fileSystem,
+            context: $this->context,
+        );
+    }
+
+    private function createKeyBasedService(): JsonlService
+    {
+        return new JsonlService(
+            pathStrategy: $this->keyBasedStrategy,
+            fileSystem: $this->fileSystem,
+            context: $this->context,
+        );
+    }
+
+    private function createTemporalServiceWithPermission(PermissionMode $permission): JsonlService
+    {
+        return new JsonlService(
+            pathStrategy: $this->temporalStrategy,
+            fileSystem: $this->fileSystem,
+            context: $this->context,
+            defaultBufferSize: null,
+            directoryPermission: $permission,
+        );
+    }
+
+    private function createBufferedService(int $bufferSize): JsonlService
+    {
+        return new JsonlService(
+            pathStrategy: $this->temporalStrategy,
+            fileSystem: $this->fileSystem,
+            context: $this->context,
+            defaultBufferSize: $bufferSize,
+        );
     }
 
     // ============================================================
@@ -49,7 +96,7 @@ final class JsonlServiceTest extends UnitTestCase
     public function test_write_log_record_writes_correct_json_line(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $record = new LogJsonlRecord(
             time: new DateTimeVO('2026-01-15T14:35:00+00:00'),
@@ -87,7 +134,7 @@ final class JsonlServiceTest extends UnitTestCase
     public function test_write_log_record_creates_directory_when_not_exists(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $record = new LogJsonlRecord(
             time: new DateTimeVO('2026-01-15T14:35:00+00:00'),
@@ -122,12 +169,7 @@ final class JsonlServiceTest extends UnitTestCase
     public function test_write_log_record_with_custom_directory_permission(): void
     {
         // Arrange
-        $service = new JsonlService(
-            $this->temporalStrategy,
-            $this->fileSystem,
-            null,
-            PermissionMode::PRIVATE_DIRECTORY
-        );
+        $service = $this->createTemporalServiceWithPermission(PermissionMode::PRIVATE_DIRECTORY);
 
         $record = new LogJsonlRecord(
             time: new DateTimeVO('2026-01-15T14:35:00+00:00'),
@@ -166,7 +208,7 @@ final class JsonlServiceTest extends UnitTestCase
     public function test_write_cache_record_writes_correct_json_line(): void
     {
         // Arrange
-        $service = new JsonlService($this->keyBasedStrategy, $this->fileSystem);
+        $service = $this->createKeyBasedService();
 
         $cacheValue = new StrictDataObject(['name' => 'John', 'age' => 30]);
         $encodedValue = json_encode($cacheValue->toArray());
@@ -197,7 +239,7 @@ final class JsonlServiceTest extends UnitTestCase
     public function test_write_cache_record_without_expiration(): void
     {
         // Arrange
-        $service = new JsonlService($this->keyBasedStrategy, $this->fileSystem);
+        $service = $this->createKeyBasedService();
 
         $cacheValue = new StrictDataObject(['name' => 'John']);
         $encodedValue = json_encode($cacheValue->toArray());
@@ -232,7 +274,7 @@ final class JsonlServiceTest extends UnitTestCase
     public function test_write_updates_context_on_success(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
         $context = new JsonlProcessingContext;
 
         $record = new LogJsonlRecord(
@@ -269,7 +311,7 @@ final class JsonlServiceTest extends UnitTestCase
     public function test_write_updates_context_on_error(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
         $context = new JsonlProcessingContext;
 
         $record = new LogJsonlRecord(
@@ -309,7 +351,7 @@ final class JsonlServiceTest extends UnitTestCase
     public function test_write_acquires_lock_when_lock_true(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $record = new LogJsonlRecord(
             time: new DateTimeVO('2026-01-15T14:35:00+00:00'),
@@ -353,7 +395,7 @@ final class JsonlServiceTest extends UnitTestCase
     public function test_write_does_not_acquire_lock_when_lock_false(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $record = new LogJsonlRecord(
             time: new DateTimeVO('2026-01-15T14:35:00+00:00'),
@@ -369,7 +411,6 @@ final class JsonlServiceTest extends UnitTestCase
         $this->fileSystem->expects($this->once())
             ->method('append');
 
-        // Pas de vérification de lock
         $this->fileSystem->expects($this->never())
             ->method('exists');
         $this->fileSystem->expects($this->never())
@@ -387,7 +428,7 @@ final class JsonlServiceTest extends UnitTestCase
 
     public function test_write_throws_exception_for_unsupported_record_type(): void
     {
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
         $unsupportedRecord = new InvalidRecordFixture;
 
         $this->expectException(JsonlException::class);
@@ -403,7 +444,7 @@ final class JsonlServiceTest extends UnitTestCase
     public function test_write_batch_writes_multiple_entities(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $records = [
             new LogJsonlRecord(
@@ -444,10 +485,8 @@ final class JsonlServiceTest extends UnitTestCase
 
     public function test_write_batch_does_nothing_for_empty_entities(): void
     {
-        // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
-        // Act & Assert - Aucune interaction avec fileSystem
         $this->fileSystem->expects($this->never())
             ->method('append');
 
@@ -460,8 +499,7 @@ final class JsonlServiceTest extends UnitTestCase
 
     public function test_write_buffered_buffers_entities_until_buffer_size_reached(): void
     {
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
-        $service->enableBuffer(3);
+        $service = $this->createBufferedService(3);
 
         $record = new LogJsonlRecord(
             time: new DateTimeVO('2026-01-15T14:35:00+00:00'),
@@ -470,14 +508,9 @@ final class JsonlServiceTest extends UnitTestCase
             payload: new StrictDataObject(['user_id' => 1]),
         );
 
-        // ❌ SUPPRIMER cette expectation - isDirectory n'est PAS appelée
-        // $this->fileSystem->expects($this->exactly(3))->method('isDirectory')...
-
-        // Pas d'append pour les 2 premiers
         $service->writeBuffered($record);
         $service->writeBuffered($record);
 
-        // Pour le 3ème, append doit être appelé
         $this->fileSystem->expects($this->once())
             ->method('append')
             ->with($this->anything(), $this->anything());
@@ -487,8 +520,7 @@ final class JsonlServiceTest extends UnitTestCase
 
     public function test_flush_buffer_writes_buffered_entities(): void
     {
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
-        $service->enableBuffer(10);
+        $service = $this->createBufferedService(10);
 
         $record = new LogJsonlRecord(
             time: new DateTimeVO('2026-01-15T14:35:00+00:00'),
@@ -503,9 +535,6 @@ final class JsonlServiceTest extends UnitTestCase
             '14.jsonl',
         ]);
 
-        // ❌ SUPPRIMER cette expectation - isDirectory n'est PAS appelée
-        // $this->fileSystem->expects($this->once())->method('isDirectory')...
-
         $service->writeBuffered($record);
 
         $this->fileSystem->expects($this->once())
@@ -517,9 +546,7 @@ final class JsonlServiceTest extends UnitTestCase
 
     public function test_disable_buffer_flushes_and_disables_buffer(): void
     {
-        // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
-        $service->enableBuffer(10);
+        $service = $this->createBufferedService(10);
 
         $record = new LogJsonlRecord(
             time: new DateTimeVO('2026-01-15T14:35:00+00:00'),
@@ -534,14 +561,11 @@ final class JsonlServiceTest extends UnitTestCase
 
         $service->writeBuffered($record);
 
-        // disableBuffer appelle flushBuffer qui fait un append
         $this->fileSystem->expects($this->exactly(2))
             ->method('append');
 
-        // Act
         $service->disableBuffer();
 
-        // Après disableBuffer, bufferSize = 0, writeBuffered appelle write directement
         $service->writeBuffered($record);
     }
 
@@ -551,14 +575,12 @@ final class JsonlServiceTest extends UnitTestCase
 
     public function test_read_all_returns_lines_when_file_exists(): void
     {
-        // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
         $filePath = '/test/file.jsonl';
 
         $content = '{"time":"2026-01-15T14:35:00+00:00","level":"info"}'."\n".
             '{"time":"2026-01-15T14:36:00+00:00","level":"debug"}'."\n";
 
-        // readAll appelle exists() une fois, readLineByLine appelle exists() une seconde fois
         $this->fileSystem->expects($this->exactly(2))
             ->method('exists')
             ->with($filePath)
@@ -569,10 +591,8 @@ final class JsonlServiceTest extends UnitTestCase
             ->with($filePath)
             ->willReturn($content);
 
-        // Act
         $result = $service->readAll($filePath);
 
-        // Assert
         $this->assertCount(2, $result);
         $this->assertSame('info', $result[0]['level']);
         $this->assertSame('debug', $result[1]['level']);
@@ -580,8 +600,7 @@ final class JsonlServiceTest extends UnitTestCase
 
     public function test_read_all_returns_empty_array_when_file_not_exists(): void
     {
-        // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
         $filePath = '/test/nonexistent.jsonl';
 
         $this->fileSystem->expects($this->once())
@@ -589,10 +608,8 @@ final class JsonlServiceTest extends UnitTestCase
             ->with($filePath)
             ->willReturn(false);
 
-        // Act
         $result = $service->readAll($filePath);
 
-        // Assert
         $this->assertEmpty($result);
     }
 
@@ -602,8 +619,7 @@ final class JsonlServiceTest extends UnitTestCase
 
     public function test_get_first_line_returns_first_line_when_file_exists(): void
     {
-        // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
         $filePath = '/test/file.jsonl';
 
         $content = '{"time":"2026-01-15T14:35:00+00:00","level":"info"}'."\n".
@@ -619,17 +635,14 @@ final class JsonlServiceTest extends UnitTestCase
             ->with($filePath)
             ->willReturn($content);
 
-        // Act
         $result = $service->getFirstLine($filePath);
 
-        // Assert
         $this->assertSame('info', $result['level']);
     }
 
     public function test_get_last_line_returns_last_line_when_file_exists(): void
     {
-        // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
         $filePath = '/test/file.jsonl';
 
         $content = '{"time":"2026-01-15T14:35:00+00:00","level":"info"}'."\n".
@@ -645,17 +658,14 @@ final class JsonlServiceTest extends UnitTestCase
             ->with($filePath)
             ->willReturn($content);
 
-        // Act
         $result = $service->getLastLine($filePath);
 
-        // Assert
         $this->assertSame('debug', $result['level']);
     }
 
     public function test_get_first_line_returns_null_when_file_empty(): void
     {
-        // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
         $filePath = '/test/empty.jsonl';
 
         $this->fileSystem->expects($this->once())
@@ -668,10 +678,8 @@ final class JsonlServiceTest extends UnitTestCase
             ->with($filePath)
             ->willReturn('');
 
-        // Act
         $result = $service->getFirstLine($filePath);
 
-        // Assert
         $this->assertNull($result);
     }
 
@@ -681,8 +689,7 @@ final class JsonlServiceTest extends UnitTestCase
 
     public function test_search_returns_filtered_lines(): void
     {
-        // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
         $filePath = '/test/file.jsonl';
 
         $content = '{"time":"2026-01-15T14:35:00+00:00","level":"info","user":"john"}'."\n".
@@ -699,12 +706,10 @@ final class JsonlServiceTest extends UnitTestCase
             ->with($filePath)
             ->willReturn($content);
 
-        // Act
         $result = $service->search($filePath, function ($line) {
             return $line['user'] === 'john';
         });
 
-        // Assert
         $this->assertCount(2, $result);
         $this->assertSame('john', $result[0]['user']);
         $this->assertSame('john', $result[1]['user']);
@@ -716,8 +721,7 @@ final class JsonlServiceTest extends UnitTestCase
 
     public function test_get_file_path_returns_path_from_strategy(): void
     {
-        // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $record = new LogJsonlRecord(
             time: new DateTimeVO('2026-01-15T14:35:00+00:00'),
@@ -726,10 +730,8 @@ final class JsonlServiceTest extends UnitTestCase
             payload: new StrictDataObject,
         );
 
-        // Act
         $result = $service->getFilePath($record);
 
-        // Assert
         $expected = implode(DIRECTORY_SEPARATOR, [
             self::BASE_PATH,
             '2026-01-15',
@@ -740,18 +742,15 @@ final class JsonlServiceTest extends UnitTestCase
 
     public function test_get_files_to_scan_returns_files_from_strategy(): void
     {
-        // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $query = new TemporalLogQueryRecord(
             from: new DateTimeVO('2026-01-15T00:00:00+00:00'),
             to: new DateTimeVO('2026-01-15T23:59:59+00:00'),
         );
 
-        // Act
         $result = $service->getFilesToScan($query);
 
-        // Assert
         $this->assertCount(24, $result);
     }
 
@@ -761,8 +760,7 @@ final class JsonlServiceTest extends UnitTestCase
 
     public function test_is_expired_returns_true_when_record_expired(): void
     {
-        // Arrange
-        $service = new JsonlService($this->keyBasedStrategy, $this->fileSystem);
+        $service = $this->createKeyBasedService();
 
         $record = new CacheJsonlRecord(
             key: 'test',
@@ -770,17 +768,14 @@ final class JsonlServiceTest extends UnitTestCase
             expires_at: new DateTimeVO('-1 hour'),
         );
 
-        // Act
         $result = $service->isExpired($record);
 
-        // Assert
         $this->assertTrue($result);
     }
 
     public function test_is_expired_returns_false_when_record_not_expired(): void
     {
-        // Arrange
-        $service = new JsonlService($this->keyBasedStrategy, $this->fileSystem);
+        $service = $this->createKeyBasedService();
 
         $record = new CacheJsonlRecord(
             key: 'test',
@@ -788,17 +783,14 @@ final class JsonlServiceTest extends UnitTestCase
             expires_at: new DateTimeVO('+1 hour'),
         );
 
-        // Act
         $result = $service->isExpired($record);
 
-        // Assert
         $this->assertFalse($result);
     }
 
     public function test_is_expired_returns_false_when_record_has_no_expiration(): void
     {
-        // Arrange
-        $service = new JsonlService($this->keyBasedStrategy, $this->fileSystem);
+        $service = $this->createKeyBasedService();
 
         $record = new CacheJsonlRecord(
             key: 'test',
@@ -806,10 +798,8 @@ final class JsonlServiceTest extends UnitTestCase
             expires_at: null,
         );
 
-        // Act
         $result = $service->isExpired($record);
 
-        // Assert
         $this->assertFalse($result);
     }
 
@@ -819,8 +809,7 @@ final class JsonlServiceTest extends UnitTestCase
 
     public function test_set_path_strategy_changes_strategy(): void
     {
-        // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $record = new CacheJsonlRecord(
             key: 'user_123',
@@ -828,11 +817,9 @@ final class JsonlServiceTest extends UnitTestCase
             expires_at: null,
         );
 
-        // Act
         $service->setPathStrategy($this->keyBasedStrategy);
         $result = $service->getFilePath($record);
 
-        // Assert
         $this->assertStringContainsString('user_123.jsonl', $result);
         $this->assertStringNotContainsString('2026-01-15', $result);
     }

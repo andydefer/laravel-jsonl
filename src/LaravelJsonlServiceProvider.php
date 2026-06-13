@@ -4,52 +4,39 @@ declare(strict_types=1);
 
 namespace AndyDefer\LaravelJsonl;
 
-use AndyDefer\LaravelJsonl\Config\JsonlConfig;
 use AndyDefer\LaravelJsonl\Config\JsonlConfigInterface;
-use AndyDefer\LaravelJsonl\Contracts\JsonlCleanerInterface;
-use AndyDefer\LaravelJsonl\Contracts\JsonlLockInterface;
-use AndyDefer\LaravelJsonl\Contracts\JsonlPathStrategyInterface;
-use AndyDefer\LaravelJsonl\Contracts\JsonlReaderInterface;
-use AndyDefer\LaravelJsonl\Contracts\JsonlWriterInterface;
+use AndyDefer\LaravelJsonl\Contexts\JsonlContext;
 use AndyDefer\LaravelJsonl\Strategies\TemporalPathStrategy;
-use AndyDefer\PhpServices\Contracts\FileSystemInterface;
 use AndyDefer\PhpServices\Services\FileSystemService;
 use Illuminate\Support\ServiceProvider;
 
-class LaravelJsonlServiceProvider extends ServiceProvider
+final class LaravelJsonlServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        // Enregistrer la configuration
-        $this->app->singleton(JsonlConfigInterface::class, JsonlConfig::class);
+        // Context (stateful - singleton)
+        $this->app->singleton(JsonlContext::class);
 
-        // Enregistrer FileSystemService
-        $this->app->singleton(FileSystemInterface::class, FileSystemService::class);
+        // Services (stateless)
+        $this->app->singleton(FileSystemService::class);
 
-        // Enregistrer la stratégie de chemin par défaut
-        $this->app->bind(JsonlPathStrategyInterface::class, function ($app) {
+        $this->app->singleton(TemporalPathStrategy::class, function ($app) {
             $config = $app->make(JsonlConfigInterface::class);
 
             return new TemporalPathStrategy($config->basePath());
         });
 
-        // Enregistrer le service JSONL
         $this->app->singleton(JsonlService::class, function ($app) {
             $config = $app->make(JsonlConfigInterface::class);
 
             return new JsonlService(
-                pathStrategy: $app->make(JsonlPathStrategyInterface::class),
-                fileSystem: $app->make(FileSystemInterface::class),
+                pathStrategy: $app->make(TemporalPathStrategy::class),
+                fileSystem: $app->make(FileSystemService::class),
+                context: $app->make(JsonlContext::class),
                 defaultBufferSize: $config->bufferSize(),
                 directoryPermission: $config->directoryPermission(),
             );
         });
-
-        // Enregistrer les interfaces vers JsonlService
-        $this->app->bind(JsonlWriterInterface::class, JsonlService::class);
-        $this->app->bind(JsonlReaderInterface::class, JsonlService::class);
-        $this->app->bind(JsonlCleanerInterface::class, JsonlService::class);
-        $this->app->bind(JsonlLockInterface::class, JsonlService::class);
     }
 
     public function boot(): void

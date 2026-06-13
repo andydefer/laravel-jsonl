@@ -7,7 +7,7 @@
 
 1. [Introduction](#introduction)
 2. [Installation](#installation)
-3. [Concepts fondamentaux](#concepts-fondamentaux)
+3. [Architecture et concepts](#architecture-et-concepts)
 4. [Les stratégies de chemin](#les-stratégies-de-chemin)
 5. [Utilisation de base](#utilisation-de-base)
 6. [Opérations avancées](#opérations-avancées)
@@ -58,12 +58,14 @@ composer require andydefer/laravel-jsonl
 
 ```php
 use AndyDefer\LaravelJsonl\JsonlService;
+use AndyDefer\LaravelJsonl\Contexts\JsonlContext;
 use AndyDefer\LaravelJsonl\Strategies\TemporalPathStrategy;
 use AndyDefer\PhpServices\Services\FileSystemService;
 
 $strategy = new TemporalPathStrategy('/var/logs');
 $fileSystem = new FileSystemService();
-$service = new JsonlService($strategy, $fileSystem);
+$context = new JsonlContext();
+$service = new JsonlService($strategy, $fileSystem, $context);
 ```
 
 ### Avec Laravel
@@ -83,7 +85,37 @@ JSONL_DIRECTORY_PERMISSION=755
 
 ---
 
-## Concepts fondamentaux
+## Architecture et concepts
+
+### Le pattern Stateless Service
+
+Le `JsonlService` est conçu comme un service **stateless**. Tout l'état (verrous actifs, buffer d'écriture) est déporté dans un `JsonlContext` injecté. Cette architecture offre plusieurs avantages :
+
+- **Testabilité** : On peut isoler et tester chaque composant indépendamment
+- **Prévisibilité** : Pas d'effets de bord cachés entre appels
+- **Concurrence** : Chaque contexte peut être isolé par thread/requête
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        JsonlService                              │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ - pathStrategy: JsonlPathStrategyInterface              │   │
+│  │ - fileSystem: FileSystemInterface                       │   │
+│  │ - context: JsonlContext ◄─── État externalisé           │   │
+│  └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                         JsonlContext                            │
+│  ┌─────────────────────┐  ┌─────────────────────────────────┐  │
+│  │ Lock State          │  │ Buffer State                    │  │
+│  │ - locks: array      │  │ - buffer: array                 │  │
+│  │                     │  │ - bufferSize: int               │  │
+│  │                     │  │ - onFlushCallback: callable     │  │
+│  └─────────────────────┘  └─────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ### Records
 
@@ -269,6 +301,7 @@ class TenantBasedPathStrategy implements JsonlPathStrategyInterface
 
 ```php
 use AndyDefer\LaravelJsonl\JsonlService;
+use AndyDefer\LaravelJsonl\Contexts\JsonlContext;
 use AndyDefer\LaravelJsonl\Records\LogJsonlRecord;
 use AndyDefer\LaravelJsonl\Strategies\TemporalPathStrategy;
 use AndyDefer\PhpServices\Services\FileSystemService;
@@ -276,7 +309,8 @@ use AndyDefer\PhpVo\ValueObjects\DateTimeVO;
 
 $strategy = new TemporalPathStrategy(storage_path('logs/structured'));
 $fs = new FileSystemService();
-$service = new JsonlService($strategy, $fs);
+$context = new JsonlContext();
+$service = new JsonlService($strategy, $fs, $context);
 
 $log = new LogJsonlRecord(
     time: new DateTimeVO(),
@@ -304,7 +338,7 @@ use AndyDefer\LaravelJsonl\Records\CacheJsonlRecord;
 use AndyDefer\LaravelJsonl\Strategies\KeyBasedPathStrategy;
 
 $strategy = new KeyBasedPathStrategy(storage_path('cache'), 2);
-$service = new JsonlService($strategy, $fs);
+$service = new JsonlService($strategy, $fs, $context);
 
 $cache = new CacheJsonlRecord(
     key: 'user_123',
@@ -664,7 +698,8 @@ class UserActivityLogger
     {
         $strategy = new TemporalPathStrategy(storage_path('logs/activities'));
         $fs = new FileSystemService();
-        $this->service = new JsonlService($strategy, $fs);
+        $context = new JsonlContext();
+        $this->service = new JsonlService($strategy, $fs, $context);
         $this->service->enableBuffer(50);
     }
 
@@ -726,7 +761,8 @@ class PersistentCache
     {
         $strategy = new KeyBasedPathStrategy(storage_path('cache/persistent'), 2);
         $fs = new FileSystemService();
-        $this->service = new JsonlService($strategy, $fs);
+        $context = new JsonlContext();
+        $this->service = new JsonlService($strategy, $fs, $context);
         $this->ttl = $defaultTtlSeconds;
     }
 
@@ -750,7 +786,7 @@ class PersistentCache
         $query = new CacheKeyQueryRecord(key: $key);
         $files = $this->service->getFilesToScan($query);
 
-        if (empty($files) || !file_exists($files[0])) {
+        if (empty($files) || !$this->service->fileExists($files[0])) {
             return null;
         }
 
@@ -774,7 +810,7 @@ class PersistentCache
         $query = new CacheKeyQueryRecord(key: $key);
         $files = $this->service->getFilesToScan($query);
 
-        if (!empty($files) && file_exists($files[0])) {
+        if (!empty($files) && $this->service->fileExists($files[0])) {
             unlink($files[0]);
         }
     }
@@ -801,6 +837,7 @@ class PersistentCache
 
 ```php
 // AppServiceProvider.php
+use AndyDefer\LaravelJsonl\Contexts\JsonlContext;
 use AndyDefer\LaravelJsonl\JsonlService;
 use AndyDefer\LaravelJsonl\Strategies\TemporalPathStrategy;
 use AndyDefer\LaravelJsonl\Strategies\KeyBasedPathStrategy;
@@ -808,18 +845,23 @@ use AndyDefer\PhpServices\Services\FileSystemService;
 
 public function register(): void
 {
+    // Contexte partagé
+    $this->app->singleton(JsonlContext::class);
+
     // Service pour les logs
-    $this->app->singleton('jsonl.logs', function () {
+    $this->app->singleton('jsonl.logs', function ($app) {
         $strategy = new TemporalPathStrategy(storage_path('logs/structured'));
         $fs = new FileSystemService();
-        return new JsonlService($strategy, $fs);
+        $context = $app->make(JsonlContext::class);
+        return new JsonlService($strategy, $fs, $context);
     });
 
     // Service pour le cache
-    $this->app->singleton('jsonl.cache', function () {
+    $this->app->singleton('jsonl.cache', function ($app) {
         $strategy = new KeyBasedPathStrategy(storage_path('cache/jsonl'), 2);
         $fs = new FileSystemService();
-        $service = new JsonlService($strategy, $fs);
+        $context = $app->make(JsonlContext::class);
+        $service = new JsonlService($strategy, $fs, $context);
         $service->enableBuffer(100);
         return $service;
     });
@@ -868,7 +910,8 @@ class AnalyticsController extends Controller
 
 | Classe | Rôle |
 |--------|------|
-| `JsonlService` | Service principal |
+| `JsonlService` | Service principal (stateless) |
+| `JsonlContext` | État du service (locks, buffer) |
 | `LogJsonlRecord` | Record pour logs |
 | `CacheJsonlRecord` | Record pour cache |
 | `TemporalPathStrategy` | Stratégie temporelle |
@@ -923,3 +966,4 @@ Le pattern glob `**` n'est pas supporté sur certains systèmes.
 ## Licence
 
 MIT © [Andy Defer](https://github.com/andydefer)
+---

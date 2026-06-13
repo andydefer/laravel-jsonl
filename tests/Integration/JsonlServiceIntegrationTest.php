@@ -6,6 +6,7 @@ namespace AndyDefer\LaravelJsonl\Tests\Integration;
 
 use AndyDefer\DomainStructures\Enums\PhpType;
 use AndyDefer\DomainStructures\Utils\StrictDataObject;
+use AndyDefer\LaravelJsonl\Contexts\JsonlContext;
 use AndyDefer\LaravelJsonl\JsonlService;
 use AndyDefer\LaravelJsonl\Records\CacheJsonlRecord;
 use AndyDefer\LaravelJsonl\Records\LogJsonlRecord;
@@ -28,6 +29,8 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
 
     private KeyBasedPathStrategy $keyBasedStrategy;
 
+    private JsonlContext $context;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -38,6 +41,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
 
         $this->temporalStrategy = new TemporalPathStrategy($this->tempDir);
         $this->keyBasedStrategy = new KeyBasedPathStrategy($this->tempDir, 2);
+        $this->context = new JsonlContext;
     }
 
     protected function tearDown(): void
@@ -70,13 +74,53 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     }
 
     // ============================================================
+    // Helper pour créer un service avec stratégie temporelle
+    // ============================================================
+
+    private function createTemporalService(): JsonlService
+    {
+        return new JsonlService(
+            pathStrategy: $this->temporalStrategy,
+            fileSystem: $this->fileSystem,
+            context: $this->context,
+        );
+    }
+
+    // ============================================================
+    // Helper pour créer un service avec stratégie par clé
+    // ============================================================
+
+    private function createKeyBasedService(): JsonlService
+    {
+        return new JsonlService(
+            pathStrategy: $this->keyBasedStrategy,
+            fileSystem: $this->fileSystem,
+            context: $this->context,
+        );
+    }
+
+    // ============================================================
+    // Helper pour créer un service bufferisé
+    // ============================================================
+
+    private function createBufferedService(int $bufferSize): JsonlService
+    {
+        return new JsonlService(
+            pathStrategy: $this->temporalStrategy,
+            fileSystem: $this->fileSystem,
+            context: $this->context,
+            defaultBufferSize: $bufferSize,
+        );
+    }
+
+    // ============================================================
     // Tests pour write() avec LogJsonlRecord
     // ============================================================
 
     public function test_write_log_record_creates_file_with_correct_content(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $record = new LogJsonlRecord(
             time: new DateTimeVO('2026-01-15T14:35:00+00:00'),
@@ -112,7 +156,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     public function test_write_multiple_log_records_appends_to_same_file(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $record1 = new LogJsonlRecord(
             time: new DateTimeVO('2026-01-15T14:35:00+00:00'),
@@ -153,7 +197,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     public function test_write_log_record_creates_different_files_for_different_days(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $recordDay1 = new LogJsonlRecord(
             time: new DateTimeVO('2026-01-15T14:35:00+00:00'),
@@ -193,7 +237,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     public function test_write_log_record_creates_different_files_for_different_hours(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $recordHour14 = new LogJsonlRecord(
             time: new DateTimeVO('2026-01-15T14:35:00+00:00'),
@@ -237,7 +281,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     public function test_write_cache_record_creates_file_with_correct_content(): void
     {
         // Arrange
-        $service = new JsonlService($this->keyBasedStrategy, $this->fileSystem);
+        $service = $this->createKeyBasedService();
 
         $payload = new StrictDataObject(['name' => 'John Doe', 'email' => 'john@example.com']);
         $encodedValue = json_encode($payload->toArray());
@@ -267,14 +311,13 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
 
         $this->assertSame('user_123', $data['key']);
         $this->assertSame($encodedValue, $data['value']);
-        // ✅ Correction : vérifier que expires_at est null (la clé existe)
         $this->assertNull($data['expires_at']);
     }
 
     public function test_write_cache_record_with_expiration_creates_file_with_expires_at(): void
     {
         // Arrange
-        $service = new JsonlService($this->keyBasedStrategy, $this->fileSystem);
+        $service = $this->createKeyBasedService();
 
         $payload = new StrictDataObject(['name' => 'John Doe']);
         $encodedValue = json_encode($payload->toArray());
@@ -309,7 +352,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     public function test_write_cache_record_sanitizes_dangerous_characters_in_key(): void
     {
         // Arrange
-        $service = new JsonlService($this->keyBasedStrategy, $this->fileSystem);
+        $service = $this->createKeyBasedService();
 
         $record = new CacheJsonlRecord(
             key: 'user/with/slashes?and&special@chars',
@@ -339,7 +382,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     public function test_read_all_returns_all_lines_from_file(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $filePath = implode(DIRECTORY_SEPARATOR, [
             $this->tempDir,
@@ -347,7 +390,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             '14.jsonl',
         ]);
 
-        // Créer un fichier avec plusieurs lignes
         $this->fileSystem->ensureDirectoryExists(dirname($filePath));
         $content = '{"time":"2026-01-15T14:35:00+00:00","level":"info","type":"test1"}'."\n".
             '{"time":"2026-01-15T14:36:00+00:00","level":"debug","type":"test2"}'."\n".
@@ -371,7 +413,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     public function test_get_first_line_returns_first_line_of_file(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $filePath = implode(DIRECTORY_SEPARATOR, [
             $this->tempDir,
@@ -395,7 +437,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     public function test_get_last_line_returns_last_line_of_file(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $filePath = implode(DIRECTORY_SEPARATOR, [
             $this->tempDir,
@@ -424,7 +466,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     public function test_search_returns_lines_matching_filter(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $filePath = implode(DIRECTORY_SEPARATOR, [
             $this->tempDir,
@@ -456,7 +498,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     public function test_write_batch_writes_multiple_records_at_once(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $records = [
             new LogJsonlRecord(
@@ -511,8 +553,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     public function test_buffer_writes_after_reaching_size(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
-        $service->enableBuffer(3);
+        $service = $this->createBufferedService(3);
 
         $record = new LogJsonlRecord(
             time: new DateTimeVO('2026-01-15T14:35:00+00:00'),
@@ -548,8 +589,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     public function test_flush_buffer_writes_pending_records(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
-        $service->enableBuffer(10);
+        $service = $this->createBufferedService(10);
 
         $record = new LogJsonlRecord(
             time: new DateTimeVO('2026-01-15T14:35:00+00:00'),
@@ -589,9 +629,8 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     public function test_clean_older_than_deletes_files_older_than_specified_days(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
-        // Créer des fichiers avec différentes dates
         $oldFile = implode(DIRECTORY_SEPARATOR, [
             $this->tempDir,
             '2026-01-01',
@@ -609,7 +648,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         $this->fileSystem->put($oldFile, '{"test":"old"}');
         $this->fileSystem->put($newFile, '{"test":"new"}');
 
-        // Modifier la date de modification du fichier oldFile
         touch($oldFile, strtotime('-31 days'));
         touch($newFile, strtotime('-1 day'));
 
@@ -625,23 +663,21 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     // ============================================================
     // Tests pour cleanExpired()
     // ============================================================
+
     public function test_clean_expired_removes_expired_cache_entries(): void
     {
-
         // Arrange
-        $service = new JsonlService($this->keyBasedStrategy, $this->fileSystem);
+        $service = $this->createKeyBasedService();
 
         $payload = new StrictDataObject(['data' => 'test']);
         $encodedValue = json_encode($payload->toArray());
 
-        // Record expiré
         $expiredRecord = new CacheJsonlRecord(
             key: 'expired_key',
             value: $encodedValue,
             expires_at: new DateTimeVO('-1 hour'),
         );
 
-        // Record non expiré
         $validRecord = new CacheJsonlRecord(
             key: 'valid_key',
             value: $encodedValue,
@@ -651,7 +687,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         $service->write($expiredRecord);
         $service->write($validRecord);
 
-        // Vérifier que les fichiers ont bien été créés
         $hashExpired = md5('expired_key');
         $expiredFilePath = implode(DIRECTORY_SEPARATOR, [
             $this->tempDir,
@@ -670,31 +705,24 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         ]);
         $this->assertFileExists($validFilePath, 'Valid record file was not created');
 
-        // Vérifier le contenu du fichier expiré
         $content = $this->getFileContent($expiredFilePath);
-
         $data = json_decode(trim($content), true);
 
         $this->assertArrayHasKey('expires_at', $data, 'Expired file should have expires_at key');
         $this->assertNotNull($data['expires_at'], 'Expires_at should not be null for expired record');
 
-        // Act
         $deletedCount = $service->cleanExpired($this->tempDir, function ($line) {
             if (! isset($line['expires_at'])) {
                 return false;
             }
             $expiresAt = new DateTimeVO($line['expires_at']);
             $now = new DateTimeVO;
-            $isExpired = $expiresAt->isBefore($now);
 
-            return $isExpired;
+            return $expiresAt->isBefore($now);
         });
 
-        // Assert
         $this->assertSame(1, $deletedCount, 'Expected 1 expired entry to be deleted');
-
         $this->assertFileDoesNotExist($expiredFilePath, 'Expired record file should be deleted');
-
         $this->assertFileExists($validFilePath, 'Valid record file should still exist');
     }
 
@@ -705,7 +733,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     public function test_clean_by_pattern_deletes_files_matching_pattern(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $file1 = implode(DIRECTORY_SEPARATOR, [$this->tempDir, '2026-01-15', '14.jsonl']);
         $file2 = implode(DIRECTORY_SEPARATOR, [$this->tempDir, '2026-01-15', '15.jsonl']);
@@ -718,10 +746,8 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
 
         $pattern = $this->tempDir.DIRECTORY_SEPARATOR.'2026-01-15'.DIRECTORY_SEPARATOR.'*.jsonl';
 
-        // Act
         $deletedCount = $service->cleanByPattern($pattern);
 
-        // Assert
         $this->assertSame(2, $deletedCount);
         $this->assertFileDoesNotExist($file1);
         $this->assertFileDoesNotExist($file2);
@@ -735,7 +761,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     public function test_dry_run_returns_files_to_delete_without_deleting(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $file1 = implode(DIRECTORY_SEPARATOR, [$this->tempDir, '2026-01-15', '14.jsonl']);
         $file2 = implode(DIRECTORY_SEPARATOR, [$this->tempDir, '2026-01-15', '15.jsonl']);
@@ -747,12 +773,10 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         touch($file1, strtotime('-31 days'));
         touch($file2, strtotime('-1 day'));
 
-        // Act
         $filesToDelete = $service->dryRun($this->tempDir, function ($file) {
             return filemtime($file) < strtotime('-30 days');
         });
 
-        // Assert
         $this->assertCount(1, $filesToDelete);
         $this->assertStringContainsString('2026-01-15', $filesToDelete[0]);
         $this->assertStringContainsString('14.jsonl', $filesToDelete[0]);
@@ -767,7 +791,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     public function test_clear_deletes_all_jsonl_files_in_directory(): void
     {
         // Arrange
-        $service = new JsonlService($this->temporalStrategy, $this->fileSystem);
+        $service = $this->createTemporalService();
 
         $file1 = implode(DIRECTORY_SEPARATOR, [$this->tempDir, '2026-01-15', '14.jsonl']);
         $file2 = implode(DIRECTORY_SEPARATOR, [$this->tempDir, '2026-01-15', '15.jsonl']);
@@ -778,10 +802,8 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         $this->fileSystem->put($file2, '{"test":2}');
         $this->fileSystem->put($file3, '{"test":3}');
 
-        // Act
         $deletedCount = $service->clear($this->tempDir);
 
-        // Assert
         $this->assertSame(3, $deletedCount);
         $this->assertFileDoesNotExist($file1);
         $this->assertFileDoesNotExist($file2);
@@ -794,8 +816,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
 
     public function test_is_expired_returns_true_for_expired_record(): void
     {
-        // Arrange
-        $service = new JsonlService($this->keyBasedStrategy, $this->fileSystem);
+        $service = $this->createKeyBasedService();
 
         $record = new CacheJsonlRecord(
             key: 'test',
@@ -803,17 +824,14 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             expires_at: new DateTimeVO('-1 hour'),
         );
 
-        // Act
         $result = $service->isExpired($record);
 
-        // Assert
         $this->assertTrue($result);
     }
 
     public function test_is_expired_returns_false_for_valid_record(): void
     {
-        // Arrange
-        $service = new JsonlService($this->keyBasedStrategy, $this->fileSystem);
+        $service = $this->createKeyBasedService();
 
         $record = new CacheJsonlRecord(
             key: 'test',
@@ -821,17 +839,14 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             expires_at: new DateTimeVO('+1 hour'),
         );
 
-        // Act
         $result = $service->isExpired($record);
 
-        // Assert
         $this->assertFalse($result);
     }
 
     public function test_is_expired_returns_false_for_record_without_expiration(): void
     {
-        // Arrange
-        $service = new JsonlService($this->keyBasedStrategy, $this->fileSystem);
+        $service = $this->createKeyBasedService();
 
         $record = new CacheJsonlRecord(
             key: 'test',
@@ -839,10 +854,8 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             expires_at: null,
         );
 
-        // Act
         $result = $service->isExpired($record);
 
-        // Assert
         $this->assertFalse($result);
     }
 
@@ -852,16 +865,13 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
 
     public function test_decode_cache_value_returns_strict_data_object(): void
     {
-        // Arrange
-        $service = new JsonlService($this->keyBasedStrategy, $this->fileSystem);
+        $service = $this->createKeyBasedService();
 
         $originalData = ['name' => 'John', 'age' => 30, 'active' => true];
         $encodedValue = json_encode($originalData);
 
-        // Act
         $result = $service->decodeCacheValue($encodedValue, PhpType::STRING->value);
 
-        // Assert
         $this->assertInstanceOf(StrictDataObject::class, $result);
         $this->assertSame('John', $result->name);
         $this->assertSame(30, $result->age);

@@ -2,7 +2,7 @@
 
 ## Description
 
-Service principal de stockage et de manipulation de fichiers JSONL (JSON Lines). Il gère l'écriture, la lecture, la recherche, le nettoyage et le verrouillage de fichiers JSONL.
+Service principal de stockage et de manipulation de fichiers JSONL (JSON Lines). Il gère l'écriture, la lecture, la recherche, le nettoyage et le verrouillage de fichiers JSONL. Le service est **stateless** : tout l'état (verrous, buffer) est déporté dans un contexte injecté.
 
 ## Hiérarchie / Implémentations
 
@@ -16,7 +16,7 @@ JsonlLockInterface
 
 ## Rôle principal
 
-Centralise toutes les opérations sur les fichiers JSONL en s'appuyant sur une stratégie de chemin (`JsonlPathStrategyInterface`) pour déterminer l'emplacement des fichiers. Il offre des fonctionnalités avancées comme l'écriture bufferisée, le verrouillage concurrentiel et le nettoyage automatique des données expirées.
+Centralise toutes les opérations sur les fichiers JSONL en s'appuyant sur une stratégie de chemin (`JsonlPathStrategyInterface`) pour déterminer l'emplacement des fichiers. Le service est conçu sans état interne : les locks et le buffer sont gérés par un `JsonlContext` injecté, permettant une meilleure testabilité et une architecture plus propre.
 
 ## Détails
 
@@ -29,7 +29,7 @@ Centralise toutes les opérations sur les fichiers JSONL en s'appuyant sur une s
 | Paramètre | Type | Description |
 |-----------|------|-------------|
 | `$entity` | `AbstractRecord` | L'entité à écrire (LogJsonlRecord ou CacheJsonlRecord) |
-| `$lock` | `bool` | Active le verrouillage exclusif du fichier |
+| `$lock` | `bool` | Active le verrouillage exclusif du fichier (défaut: true) |
 | `$context` | `JsonlProcessingContext|null` | Contexte optionnel pour suivre l'opération |
 
 **Retourne :** `void`
@@ -38,7 +38,7 @@ Centralise toutes les opérations sur les fichiers JSONL en s'appuyant sur une s
 
 **Exemple :**
 ```php
-$service = new JsonlService($strategy, $fileSystem);
+$service = new JsonlService($strategy, $fileSystem, $context);
 $record = new LogJsonlRecord(/* ... */);
 $service->write($record);
 ```
@@ -273,7 +273,6 @@ $deleted = $service->cleanExpired('/cache', function ($line) {
 
 **Exemple :**
 ```php
-// Supprimer tous les fichiers JSONL du 15 janvier 2026
 $pattern = '/var/logs/2026-01-15/*.jsonl';
 $deletedCount = $service->cleanByPattern($pattern);
 echo "Deleted {$deletedCount} files";
@@ -293,7 +292,6 @@ echo "Deleted {$deletedCount} files";
 
 **Exemple :**
 ```php
-// Simuler la suppression des fichiers de plus de 30 jours
 $filesToDelete = $service->dryRun('/var/logs', function ($file) {
     return filemtime($file) < strtotime('-30 days');
 });
@@ -317,7 +315,6 @@ echo "Total files that would be deleted: " . count($filesToDelete);
 
 **Exemple :**
 ```php
-// Vider complètement le cache
 $cacheDir = '/var/app/cache';
 $deletedCount = $service->clear($cacheDir);
 echo "Cleared {$deletedCount} cache files";
@@ -338,10 +335,8 @@ echo "Cleared {$deletedCount} cache files";
 
 **Exemple :**
 ```php
-// Acquérir un verrou manuellement
 if ($service->acquire('/var/logs/app.jsonl', 3)) {
     try {
-        // Effectuer des opérations exclusives
         file_put_contents('/var/logs/app.jsonl', $data, FILE_APPEND);
     } finally {
         $service->release('/var/logs/app.jsonl');
@@ -379,7 +374,6 @@ $service->release('/var/logs/app.jsonl');
 
 **Exemple :**
 ```php
-// Exécution automatique avec verrouillage/déverrouillage
 $result = $service->executeWithLock('/var/logs/app.jsonl', function () use ($service) {
     $content = $service->readAll('/var/logs/app.jsonl');
     $content[] = ['time' => date('c'), 'event' => 'processed'];
@@ -421,13 +415,7 @@ if ($service->isLocked('/var/logs/app.jsonl')) {
 
 **Exemple :**
 ```php
-$logRecord = new LogJsonlRecord(
-    time: new DateTimeVO('2026-01-15T14:35:00+00:00'),
-    level: 'info',
-    type: 'test',
-    payload: new StrictDataObject(),
-);
-
+$logRecord = new LogJsonlRecord(/* ... */);
 $filePath = $service->getFilePath($logRecord);
 echo "Log will be stored in: {$filePath}";
 // Affiche: /var/logs/2026-01-15/14.jsonl
@@ -445,7 +433,6 @@ echo "Log will be stored in: {$filePath}";
 
 **Exemple :**
 ```php
-// Pour une recherche de logs sur une plage horaire
 $query = new TemporalLogQueryRecord(
     from: new DateTimeVO('2026-01-15T10:00:00+00:00'),
     to: new DateTimeVO('2026-01-15T14:00:00+00:00'),
@@ -464,6 +451,72 @@ foreach ($filesToScan as $file) {
 
 ---
 
+### `getBaseDirectory(): string`
+
+| Paramètre | Type | Description |
+|-----------|------|-------------|
+| Aucun | - | - |
+
+**Retourne :** `string` - Le répertoire racine depuis la stratégie de chemin
+
+**Exemple :**
+```php
+$baseDir = $service->getBaseDirectory();
+echo "Base directory: {$baseDir}";
+// Affiche: /var/logs
+```
+
+---
+
+### `fileExists(string $filePath): bool`
+
+| Paramètre | Type | Description |
+|-----------|------|-------------|
+| `$filePath` | `string` | Chemin du fichier à vérifier |
+
+**Retourne :** `bool` - True si le fichier existe
+
+**Exemple :**
+```php
+if ($service->fileExists('/var/logs/2026-01-15/14.jsonl')) {
+    $content = $service->readAll('/var/logs/2026-01-15/14.jsonl');
+}
+```
+
+---
+
+### `isBufferEnabled(): bool`
+
+| Paramètre | Type | Description |
+|-----------|------|-------------|
+| Aucun | - | - |
+
+**Retourne :** `bool` - True si le buffer est activé
+
+**Exemple :**
+```php
+if (!$service->isBufferEnabled()) {
+    $service->enableBuffer(100);
+}
+```
+
+---
+
+### `getBufferSize(): int`
+
+| Paramètre | Type | Description |
+|-----------|------|-------------|
+| Aucun | - | - |
+
+**Retourne :** `int` - Taille actuelle du buffer (0 si désactivé)
+
+**Exemple :**
+```php
+echo "Buffer size: " . $service->getBufferSize();
+```
+
+---
+
 ### `setPathStrategy(JsonlPathStrategyInterface $pathStrategy): void`
 
 | Paramètre | Type | Description |
@@ -474,12 +527,7 @@ foreach ($filesToScan as $file) {
 
 **Exemple :**
 ```php
-// Changer dynamiquement de stratégie
-$service = new JsonlService($temporalStrategy, $fileSystem);
-
-// Passer du mode logs (temporel) au mode cache (par clé)
 $service->setPathStrategy($keyBasedStrategy);
-
 $cacheRecord = new CacheJsonlRecord(key: 'user_123', ...);
 $filePath = $service->getFilePath($cacheRecord);
 // Maintenant utilise l'organisation par hash
@@ -504,7 +552,6 @@ if (!empty($cachedValue)) {
     
     if ($service->isExpired($record)) {
         echo "Cache expired, need to refresh";
-        // Recalculer la valeur
     } else {
         echo "Cache valid: " . $record->value;
     }
@@ -531,13 +578,39 @@ echo $decoded->name; // 'John'
 echo $decoded->email; // 'john@example.com'
 ```
 
+---
+
+## Constructeur
+
+### `__construct(JsonlPathStrategyInterface $pathStrategy, FileSystemInterface $fileSystem, JsonlContext $context, ?int $defaultBufferSize = null, PermissionMode $directoryPermission = PermissionMode::DIRECTORY)`
+
+| Paramètre | Type | Description |
+|-----------|------|-------------|
+| `$pathStrategy` | `JsonlPathStrategyInterface` | Stratégie de génération des chemins |
+| `$fileSystem` | `FileSystemInterface` | Service de gestion des fichiers |
+| `$context` | `JsonlContext` | Contexte pour l'état (locks, buffer) |
+| `$defaultBufferSize` | `int|null` | Taille par défaut du buffer (null = désactivé) |
+| `$directoryPermission` | `PermissionMode` | Permissions des dossiers créés |
+
+**Exemple :**
+```php
+$strategy = new TemporalPathStrategy('/var/logs');
+$fs = new FileSystemService();
+$context = new JsonlContext();
+$service = new JsonlService($strategy, $fs, $context, 100, PermissionMode::DIRECTORY);
+```
+
+---
+
 ## Cas d'utilisation
 
 ### Cas 1 : Journalisation d'événements utilisateur
 
 ```php
 $strategy = new TemporalPathStrategy('/var/logs');
-$service = new JsonlService($strategy, $fileSystem);
+$fs = new FileSystemService();
+$context = new JsonlContext();
+$service = new JsonlService($strategy, $fs, $context);
 
 $log = new LogJsonlRecord(
     time: new DateTimeVO(),
@@ -553,12 +626,13 @@ $service->write($log);
 
 ```php
 $strategy = new KeyBasedPathStrategy('/cache', 2);
-$service = new JsonlService($strategy, $fileSystem);
+$fs = new FileSystemService();
+$context = new JsonlContext();
+$service = new JsonlService($strategy, $fs, $context);
 
 $cache = new CacheJsonlRecord(
     key: 'user_123',
     value: json_encode(['name' => 'John']),
-    value_type: PhpType::STRING,
     expires_at: new DateTimeVO('+1 hour'),
 );
 
@@ -595,7 +669,6 @@ $service->flushBuffer();
 ### Cas 5 : Nettoyage sécurisé avec dry run
 
 ```php
-// Vérifier d'abord quels fichiers seront supprimés
 $filesToDelete = $service->dryRun('/var/logs', function ($file) {
     return filemtime($file) < strtotime('-90 days');
 });
@@ -603,7 +676,6 @@ $filesToDelete = $service->dryRun('/var/logs', function ($file) {
 if (count($filesToDelete) > 0) {
     echo "WARNING: About to delete " . count($filesToDelete) . " files\n";
     
-    // Confirmation manuelle
     $confirm = readline("Proceed with deletion? (y/n): ");
     if ($confirm === 'y') {
         $deleted = $service->cleanOlderThan(90, '/var/logs');
@@ -615,13 +687,11 @@ if (count($filesToDelete) > 0) {
 ### Cas 6 : Opération atomique avec verrouillage automatique
 
 ```php
-// Lecture + écriture atomique
 $result = $service->executeWithLock('/shared/data.jsonl', function () use ($service) {
     $existing = $service->readAll('/shared/data.jsonl');
     $newData = ['timestamp' => time(), 'value' => rand(1, 100)];
     $existing[] = $newData;
     
-    // Réécriture complète
     $content = '';
     foreach ($existing as $item) {
         $content .= json_encode($item) . "\n";
@@ -634,6 +704,8 @@ $result = $service->executeWithLock('/shared/data.jsonl', function () use ($serv
 echo "Total entries after atomic operation: {$result}";
 ```
 
+---
+
 ## Gestion des erreurs
 
 | Situation | Exception | Message |
@@ -644,18 +716,24 @@ echo "Total entries after atomic operation: {$result}";
 | Timeout d'acquisition de verrou | `JsonlLockException` | `Timeout acquiring lock for: {path}` |
 | Erreur lors de l'écriture | `JsonlException` | Message de l'exception originale |
 
+---
+
 ## Intégration
 
 `JsonlService` est le point d'entrée principal du package. Il nécessite :
 
 - Une `JsonlPathStrategyInterface` (ex: `TemporalPathStrategy` ou `KeyBasedPathStrategy`)
 - Une `FileSystemInterface` (ex: `FileSystemService` de `php-services`)
+- Un `JsonlContext` pour la gestion d'état
 
 ```php
 $strategy = new TemporalPathStrategy('/logs');
 $fileSystem = new FileSystemService();
-$service = new JsonlService($strategy, $fileSystem);
+$context = new JsonlContext();
+$service = new JsonlService($strategy, $fileSystem, $context);
 ```
+
+---
 
 ## Performance
 
@@ -685,6 +763,8 @@ $service = new JsonlService($strategy, $fileSystem);
 - Streaming ligne par ligne pour les gros fichiers
 - Pattern glob pour les recherches rapides
 
+---
+
 ## Compatibilité
 
 | Version PHP | Support | Notes |
@@ -697,6 +777,8 @@ $service = new JsonlService($strategy, $fileSystem);
 - `php-vo` (DateTimeVO, AbstractValueObject)
 - `domain-structures` (AbstractRecord, StrictDataObject)
 
+---
+
 ## Exemple complet
 
 ```php
@@ -704,8 +786,8 @@ $service = new JsonlService($strategy, $fileSystem);
 
 declare(strict_types=1);
 
-use AndyDefer\DomainStructures\Enums\PhpType;
 use AndyDefer\DomainStructures\Structures\StrictDataObject;
+use AndyDefer\LaravelJsonl\Contexts\JsonlContext;
 use AndyDefer\LaravelJsonl\JsonlService;
 use AndyDefer\LaravelJsonl\Records\CacheJsonlRecord;
 use AndyDefer\LaravelJsonl\Records\LogJsonlRecord;
@@ -718,9 +800,10 @@ use AndyDefer\PhpVo\ValueObjects\DateTimeVO;
 $logStrategy = new TemporalPathStrategy('/var/app/logs');
 $cacheStrategy = new KeyBasedPathStrategy('/var/app/cache', 2);
 $fs = new FileSystemService();
+$context = new JsonlContext();
 
-$logService = new JsonlService($logStrategy, $fs);
-$cacheService = new JsonlService($cacheStrategy, $fs);
+$logService = new JsonlService($logStrategy, $fs, $context);
+$cacheService = new JsonlService($cacheStrategy, $fs, $context);
 
 // 2. Écrire des logs
 $logService->write(new LogJsonlRecord(
@@ -738,7 +821,6 @@ echo "Last log: " . json_encode($lastLine);
 $cacheService->write(new CacheJsonlRecord(
     key: 'user_profile_123',
     value: json_encode(['name' => 'John', 'email' => 'john@example.com']),
-    value_type: PhpType::STRING,
     expires_at: new DateTimeVO('+1 hour'),
 ));
 
@@ -748,40 +830,21 @@ if (!empty($cachedData)) {
     $record = CacheJsonlRecord::fromArray($cachedData[0]);
     if ($cacheService->isExpired($record)) {
         echo "Cache expired, refreshing...";
-        // Recalculer...
     }
 }
 
-// 6. Décoder une valeur de cache
-$decoded = $cacheService->decodeCacheValue($cachedData[0]['value'], $cachedData[0]['value_type']);
-echo $decoded->name; // 'John'
-
-// 7. Nettoyage des vieux logs (simulation d'abord)
-$toDelete = $logService->dryRun('/var/app/logs', function ($file) {
-    return filemtime($file) < strtotime('-30 days');
-});
-echo "Would delete " . count($toDelete) . " old log files";
-
-// 8. Suppression réelle des vieux logs
+// 6. Nettoyage des vieux logs
 $deleted = $logService->cleanOlderThan(30, '/var/app/logs');
 echo "Deleted {$deleted} old log files";
 
-// 9. Suppression par pattern
-$deleted = $logService->cleanByPattern('/var/app/logs/2026-01-15/*.jsonl');
-echo "Deleted {$deleted} files from January 15";
-
-// 10. Vider complètement le cache
-$cleared = $cacheService->clear('/var/app/cache');
-echo "Cleared {$cleared} cache files";
-
-// 11. Opération atomique sur fichier partagé
+// 7. Opération atomique
 $count = $logService->executeWithLock('/var/app/logs/shared.jsonl', function () use ($logService) {
     $lines = $logService->readAll('/var/app/logs/shared.jsonl');
     return count($lines);
 });
 echo "Shared log has {$count} entries";
 
-// 12. Écriture bufferisée haute performance
+// 8. Écriture bufferisée
 $logService->enableBuffer(100);
 $logService->onFlush(function ($path, $count) {
     echo "Flushed {$count} lines to {$path}\n";
@@ -793,8 +856,11 @@ for ($i = 0; $i < 1000; $i++) {
 $logService->flushBuffer();
 ```
 
+---
+
 ## Voir aussi
 
+- `JsonlContext` - Contexte pour l'état (locks et buffer)
 - `TemporalPathStrategy` - Stratégie pour logs (organisation par date/heure)
 - `KeyBasedPathStrategy` - Stratégie pour cache (organisation par hash)
 - `JsonlProcessingContext` - Suivi d'état des opérations
