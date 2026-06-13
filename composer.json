@@ -1,0 +1,48 @@
+{
+    "name": "andydefer/laravel-jsonl",
+    "description": "JSONL storage service for Laravel - write, read, query, and clean JSON Lines files with custom path strategies",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Andy Kani",
+            "email": "andykanidimbu@gmail.com"
+        }
+    ],
+    "version": "1.0.0",
+    "require": {
+        "php": "^8.2",
+        "laravel/framework": "^12.0|^13.0|^14.0|^15.0",
+        "andydefer/php-services": "^0.5.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^12.5",
+        "laravel/pint": "^1.26",
+        "orchestra/testbench": "^10.8",
+        "mockery/mockery": "^1.6"
+    },
+    "autoload": {
+        "psr-4": {
+            "AndyDefer\\LaravelJsonl\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "AndyDefer\\LaravelJsonl\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "AndyDefer\\LaravelJsonl\\LaravelJsonlServiceProvider"
+            ]
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "test-unit": "phpunit --testsuite=unit",
+        "test-integration": "phpunit --testsuite=integration",
+        "pint": "pint"
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

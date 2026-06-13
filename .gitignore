@@ -1,0 +1,94 @@
+# Composer
+/vendor/
+composer.lock
+composer.phar
+
+# PHPUnit
+.phpunit.cache/
+*.cache
+coverage/
+*.coverage
+*.html
+*.log
+
+
+# PHPStan
+phpstan.neon
+phpstan*.neon
+.phpstan.cache/
+tmp/
+
+# Psalm
+psalm.xml
+psalm*.xml
+psalm-report.json
+
+# Rector
+rector.php
+rector*.php
+rector*.cache
+
+# Pint
+pint.json
+pint-test.md
+pint.md
+
+# IDE
+/.idea/
+/.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+.editorconfig
+.phpstorm.meta.php
+_ide_helper.php
+_ide_helper_models.php
+.phpintel/
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Testing
+/testbench
+/.testbench
+*.sqlite
+*.sqlite3
+/storage
+/bootstrap/cache/
+/config/*.php
+/database/*.sqlite
+/database/*.sqlite3
+/STRUCTURE.md
+# Debug
+dump.sql
+dump.json
+dump.log
+
+# Temp files
+/tmp
+temp/
+*.tmp
+*.temp
+
+# Project specific
+/docs/work-summaries/
+/docs/diffs/
+/prompts/
+/all.txt
+diff.txt
+CHANGED_FILES.md
+FILES_CHECKLIST.md
+
+# Makefile artifacts
+pint-test.md
+pint.md
+phpstan.md
+psalm.md
+rector.md
