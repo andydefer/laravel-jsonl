@@ -33,7 +33,7 @@ use Throwable;
  *
  * @author Andy Defer
  */
-final class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlReaderInterface, JsonlWriterInterface
+class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlReaderInterface, JsonlWriterInterface
 {
     public function __construct(
         private JsonlPathStrategyInterface $pathStrategy,
