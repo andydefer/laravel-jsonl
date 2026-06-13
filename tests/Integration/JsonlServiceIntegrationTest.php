@@ -245,7 +245,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         $record = new CacheJsonlRecord(
             key: 'user_123',
             value: $encodedValue,
-            value_type: PhpType::STRING,
             expires_at: null,
         );
 
@@ -270,7 +269,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         $this->assertSame($encodedValue, $data['value']);
         // ✅ Correction : vérifier que expires_at est null (la clé existe)
         $this->assertNull($data['expires_at']);
-        $this->assertSame(PhpType::ABSTRACT_DATA_OBJECT->value, $data['value_type']);
     }
 
     public function test_write_cache_record_with_expiration_creates_file_with_expires_at(): void
@@ -284,7 +282,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         $record = new CacheJsonlRecord(
             key: 'session_abc',
             value: $encodedValue,
-            value_type: PhpType::STRING,
             expires_at: new DateTimeVO('+1 hour'),
         );
 
@@ -317,7 +314,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         $record = new CacheJsonlRecord(
             key: 'user/with/slashes?and&special@chars',
             value: json_encode(['test' => true]),
-            value_type: PhpType::STRING,
             expires_at: null,
         );
 
@@ -642,7 +638,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         $expiredRecord = new CacheJsonlRecord(
             key: 'expired_key',
             value: $encodedValue,
-            value_type: PhpType::STRING,
             expires_at: new DateTimeVO('-1 hour'),
         );
 
@@ -650,7 +645,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         $validRecord = new CacheJsonlRecord(
             key: 'valid_key',
             value: $encodedValue,
-            value_type: PhpType::STRING,
             expires_at: new DateTimeVO('+1 hour'),
         );
 
@@ -806,7 +800,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         $record = new CacheJsonlRecord(
             key: 'test',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: new DateTimeVO('-1 hour'),
         );
 
@@ -825,7 +818,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         $record = new CacheJsonlRecord(
             key: 'test',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: new DateTimeVO('+1 hour'),
         );
 
@@ -844,7 +836,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         $record = new CacheJsonlRecord(
             key: 'test',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: null,
         );
 

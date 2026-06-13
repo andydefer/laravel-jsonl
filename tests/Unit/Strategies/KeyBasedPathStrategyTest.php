@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace AndyDefer\LaravelJsonl\Tests\Unit\Strategies;
 
-use AndyDefer\DomainStructures\Enums\PhpType;
 use AndyDefer\LaravelJsonl\Records\CacheJsonlRecord;
 use AndyDefer\LaravelJsonl\Records\CacheKeyQueryRecord;
 use AndyDefer\LaravelJsonl\Strategies\KeyBasedPathStrategy;
@@ -25,7 +24,6 @@ final class KeyBasedPathStrategyTest extends UnitTestCase
         $record = new CacheJsonlRecord(
             key: 'user_123',
             value: '{"name":"John"}',
-            value_type: PhpType::STRING,
             expires_at: null,
         );
 
@@ -46,7 +44,6 @@ final class KeyBasedPathStrategyTest extends UnitTestCase
         $record = new CacheJsonlRecord(
             key: 'session_abc',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: null,
         );
 
@@ -71,7 +68,6 @@ final class KeyBasedPathStrategyTest extends UnitTestCase
         $record = new CacheJsonlRecord(
             key: 'user_456',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: null,
         );
 
@@ -96,7 +92,6 @@ final class KeyBasedPathStrategyTest extends UnitTestCase
         $record = new CacheJsonlRecord(
             key: 'user/with/slashes?and&special@chars',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: null,
         );
 
@@ -121,7 +116,6 @@ final class KeyBasedPathStrategyTest extends UnitTestCase
         $record = new CacheJsonlRecord(
             key: 'user_éàç_€',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: null,
         );
 
@@ -142,7 +136,6 @@ final class KeyBasedPathStrategyTest extends UnitTestCase
         $record = new CacheJsonlRecord(
             key: 'user-123_abc.def',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: null,
         );
 
@@ -234,13 +227,11 @@ final class KeyBasedPathStrategyTest extends UnitTestCase
         $record1 = new CacheJsonlRecord(
             key: 'consistent_key',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: null,
         );
         $record2 = new CacheJsonlRecord(
             key: 'consistent_key',
             value: 'different_value',
-            value_type: PhpType::STRING,
             expires_at: null,
         );
 
@@ -259,13 +250,11 @@ final class KeyBasedPathStrategyTest extends UnitTestCase
         $record1 = new CacheJsonlRecord(
             key: 'key_one',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: null,
         );
         $record2 = new CacheJsonlRecord(
             key: 'key_two',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: null,
         );
 
@@ -287,7 +276,6 @@ final class KeyBasedPathStrategyTest extends UnitTestCase
             $record = new CacheJsonlRecord(
                 key: $key,
                 value: '',
-                value_type: PhpType::STRING,
                 expires_at: null,
             );
 
@@ -306,7 +294,6 @@ final class KeyBasedPathStrategyTest extends UnitTestCase
         $record = new CacheJsonlRecord(
             key: 'test_key',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: null,
         );
 
@@ -324,7 +311,6 @@ final class KeyBasedPathStrategyTest extends UnitTestCase
         $record = new CacheJsonlRecord(
             key: 'test_key',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: null,
         );
 
@@ -341,7 +327,6 @@ final class KeyBasedPathStrategyTest extends UnitTestCase
         $record = new CacheJsonlRecord(
             key: 'test_key',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: new DateTimeVO('+1 hour'),
         );
 

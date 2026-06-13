@@ -22,22 +22,41 @@ use AndyDefer\LaravelJsonl\ValueObjects\CacheValueVO;
 use AndyDefer\LaravelJsonl\ValueObjects\JsonlLockVO;
 use AndyDefer\PhpServices\Contracts\FileSystemInterface;
 use AndyDefer\PhpServices\Enums\PermissionMode;
+use Throwable;
 
-class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlReaderInterface, JsonlWriterInterface
+/**
+ * Main service for JSONL (JSON Lines) storage operations.
+ *
+ * Provides write, read, search, clean, and lock capabilities for JSONL files.
+ * Supports buffered writes, concurrent access with file locking, and
+ * configurable path strategies for different use cases (logs, cache, etc.).
+ *
+ * @author Andy Defer
+ */
+final class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlReaderInterface, JsonlWriterInterface
 {
+    /** @var array<string, JsonlLockVO> */
     private array $locks = [];
 
+    /** @var array<string, array<AbstractRecord>> */
     private array $buffer = [];
 
     private int $bufferSize = 0;
 
+    /** @var callable(string, int):void|null */
     private $onFlushCallback = null;
 
+    /**
+     * @param  JsonlPathStrategyInterface  $pathStrategy  Strategy for file path generation
+     * @param  FileSystemInterface  $fileSystem  File system operations
+     * @param  int|null  $defaultBufferSize  Default buffer size (null = disabled)
+     * @param  PermissionMode  $directoryPermission  Permission mode for created directories
+     */
     public function __construct(
         private JsonlPathStrategyInterface $pathStrategy,
-        private FileSystemInterface $fileSystem,
-        private ?int $defaultBufferSize = null,
-        private PermissionMode $directoryPermission = PermissionMode::DIRECTORY,
+        private readonly FileSystemInterface $fileSystem,
+        private readonly ?int $defaultBufferSize = null,
+        private readonly PermissionMode $directoryPermission = PermissionMode::DIRECTORY,
     ) {
         if ($defaultBufferSize !== null && $defaultBufferSize > 0) {
             $this->enableBuffer($defaultBufferSize);
@@ -45,9 +64,12 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
     }
 
     // ============================================================
-    // JsonlWriterInterface
+    // JsonlWriterInterface Implementation
     // ============================================================
 
+    /**
+     * {@inheritDoc}
+     */
     public function write(AbstractRecord $entity, bool $lock = true, ?JsonlProcessingContext $context = null): void
     {
         $context ??= new JsonlProcessingContext;
@@ -55,63 +77,33 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
 
         try {
             $filePath = $this->pathStrategy->getFilePath($entity);
-
             $data = $this->prepareDataForWrite($entity);
-
-            $jsonLine = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n";
-
-            if ($jsonLine === false) {
-                throw new JsonlException('Failed to encode JSON: '.json_last_error_msg());
-            }
+            $jsonLine = $this->encodeToJsonLine($data);
 
             $this->ensureDirectoryExists($filePath);
 
-            $callback = function () use ($filePath, $jsonLine, $context) {
+            $writeOperation = function () use ($filePath, $jsonLine, $context): void {
                 $this->fileSystem->append($filePath, $jsonLine);
                 $context->addWrittenLines($filePath, 1);
                 $context->addProcessedFile($filePath);
             };
 
             if ($lock) {
-                $this->executeWithLock($filePath, $callback);
+                $this->executeWithLock($filePath, $writeOperation);
             } else {
-                $callback();
+                $writeOperation();
             }
 
             $context->complete();
-        } catch (\Exception $e) {
+        } catch (Throwable $e) {
             $context->setLastError($e->getMessage());
             throw new JsonlException($e->getMessage(), 0, $e);
         }
     }
 
-    private function prepareDataForWrite(AbstractRecord $entity): array
-    {
-        if ($entity instanceof CacheJsonlRecord) {
-            $decoded = json_decode($entity->value, true);
-            $dataObject = new StrictDataObject($decoded);
-            $CacheValueVO = new CacheValueVO($dataObject);
-
-            return [
-                'key' => $entity->key,
-                'value' => $CacheValueVO->getEncodedValue(),
-                'value_type' => $CacheValueVO->getType()->value,
-                'expires_at' => $entity->expires_at?->getValue(),
-            ];
-        }
-
-        if ($entity instanceof LogJsonlRecord) {
-            return [
-                'time' => $entity->time->getValue(),
-                'level' => $entity->level,
-                'type' => $entity->type,
-                'payload' => $entity->payload->toArray(),
-            ];
-        }
-
-        throw new JsonlException('Unsupported record type: '.get_class($entity));
-    }
-
+    /**
+     * {@inheritDoc}
+     */
     public function writeBatch(array $entities, bool $lock = true, ?JsonlProcessingContext $context = null): void
     {
         if (empty($entities)) {
@@ -127,30 +119,35 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
 
             $this->ensureDirectoryExists($filePath);
 
-            $callback = function () use ($filePath, $entities, $context) {
+            $writeOperation = function () use ($filePath, $entities, $context): void {
                 $content = '';
+
                 foreach ($entities as $entity) {
                     $data = $this->prepareDataForWrite($entity);
-                    $content .= json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n";
+                    $content .= $this->encodeToJsonLine($data);
                 }
+
                 $this->fileSystem->append($filePath, $content);
                 $context->addWrittenLines($filePath, count($entities));
                 $context->addProcessedFile($filePath);
             };
 
             if ($lock) {
-                $this->executeWithLock($filePath, $callback);
+                $this->executeWithLock($filePath, $writeOperation);
             } else {
-                $callback();
+                $writeOperation();
             }
 
             $context->complete();
-        } catch (\Exception $e) {
+        } catch (Throwable $e) {
             $context->setLastError($e->getMessage());
             throw new JsonlException($e->getMessage(), 0, $e);
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function writeBuffered(AbstractRecord $entity, ?JsonlProcessingContext $context = null): void
     {
         if ($this->bufferSize === 0) {
@@ -172,55 +169,56 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function flushBuffer(?string $filePath = null, ?JsonlProcessingContext $context = null): void
     {
         $context ??= new JsonlProcessingContext;
 
         if ($filePath !== null) {
-            if (! empty($this->buffer[$filePath])) {
-                $content = '';
-                foreach ($this->buffer[$filePath] as $entity) {
-                    $data = $this->prepareDataForWrite($entity);
-                    $content .= json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n";
-                }
-                $this->fileSystem->append($filePath, $content);
-                $count = count($this->buffer[$filePath]);
-                $context->addWrittenLines($filePath, $count);
-                $this->buffer[$filePath] = [];
-
-                if ($this->onFlushCallback !== null) {
-                    call_user_func($this->onFlushCallback, $filePath, $count);
-                }
-            }
+            $this->flushSingleBuffer($filePath, $context);
 
             return;
         }
 
         foreach (array_keys($this->buffer) as $path) {
-            $this->flushBuffer($path, $context);
+            $this->flushSingleBuffer($path, $context);
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function enableBuffer(int $size = 100): void
     {
         $this->bufferSize = $size;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function disableBuffer(): void
     {
         $this->flushBuffer();
         $this->bufferSize = 0;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function onFlush(callable $callback): void
     {
         $this->onFlushCallback = $callback;
     }
 
     // ============================================================
-    // JsonlReaderInterface
+    // JsonlReaderInterface Implementation
     // ============================================================
 
+    /**
+     * {@inheritDoc}
+     */
     public function readAll(string $filePath, ?JsonlProcessingContext $context = null): array
     {
         $context ??= new JsonlProcessingContext;
@@ -232,7 +230,7 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
 
         $lines = [];
 
-        $this->readLineByLine($filePath, function ($line) use (&$lines, $context, $filePath) {
+        $this->readLineByLine($filePath, function ($line) use (&$lines, $context, $filePath): void {
             $lines[] = $line;
             $context->addWrittenLines($filePath, 1);
         }, $context);
@@ -242,6 +240,9 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         return $lines;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function readLineByLine(string $filePath, callable $callback, ?JsonlProcessingContext $context = null): void
     {
         $context ??= new JsonlProcessingContext;
@@ -254,17 +255,23 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         $lines = explode("\n", $content);
 
         foreach ($lines as $line) {
-            if (trim($line) === '') {
+            $trimmedLine = trim($line);
+
+            if ($trimmedLine === '') {
                 continue;
             }
 
-            $data = json_decode($line, true);
+            $data = json_decode($trimmedLine, true);
+
             if ($data !== null) {
                 $callback($data);
             }
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function search(string $filePath, callable $filter, ?JsonlProcessingContext $context = null): array
     {
         $context ??= new JsonlProcessingContext;
@@ -272,7 +279,7 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
 
         $results = [];
 
-        $this->readLineByLine($filePath, function ($line) use ($filter, &$results, $context, $filePath) {
+        $this->readLineByLine($filePath, function ($line) use ($filter, &$results, $context, $filePath): void {
             if ($filter($line)) {
                 $results[] = $line;
             }
@@ -284,6 +291,9 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         return $results;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function searchMultiple(array $filePaths, callable $filter, ?JsonlProcessingContext $context = null): array
     {
         $context ??= new JsonlProcessingContext;
@@ -306,6 +316,9 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         return $results;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function getLastLine(string $filePath, ?JsonlProcessingContext $context = null): ?array
     {
         $context ??= new JsonlProcessingContext;
@@ -316,7 +329,6 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
 
         $content = $this->fileSystem->get($filePath);
         $lines = explode("\n", trim($content));
-
         $lines = array_filter($lines, fn ($line) => trim($line) !== '');
 
         if (empty($lines)) {
@@ -328,6 +340,9 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         return json_decode($lastLine, true);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function getFirstLine(string $filePath, ?JsonlProcessingContext $context = null): ?array
     {
         $context ??= new JsonlProcessingContext;
@@ -340,8 +355,10 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         $lines = explode("\n", $content);
 
         foreach ($lines as $line) {
-            if (trim($line) !== '') {
-                return json_decode($line, true);
+            $trimmedLine = trim($line);
+
+            if ($trimmedLine !== '') {
+                return json_decode($trimmedLine, true);
             }
         }
 
@@ -349,9 +366,12 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
     }
 
     // ============================================================
-    // JsonlCleanerInterface
+    // JsonlCleanerInterface Implementation
     // ============================================================
 
+    /**
+     * {@inheritDoc}
+     */
     public function cleanOlderThan(int $days, string $basePath, ?JsonlProcessingContext $context = null): int
     {
         $context ??= new JsonlProcessingContext;
@@ -377,28 +397,25 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         return $deletedCount;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function cleanExpired(string $basePath, callable $isExpired, ?JsonlProcessingContext $context = null): int
     {
         $context ??= new JsonlProcessingContext;
         $context->setCurrentOperation(OperationType::CLEANING_EXPIRED);
 
-        $deletedCount = 0;
-
-        // Utilisation de RecursiveIterator pour une recherche récursive compatible tous systèmes
         if (! is_dir($basePath)) {
             $context->complete();
 
             return 0;
         }
 
-        $directory = new \RecursiveDirectoryIterator($basePath, \RecursiveDirectoryIterator::SKIP_DOTS);
-        $iterator = new \RecursiveIteratorIterator($directory);
-        $regex = new \RegexIterator($iterator, '/\.jsonl$/i');
+        $deletedCount = 0;
+        $files = $this->findAllJsonlFiles($basePath);
 
-        foreach ($regex as $file) {
-            $filePath = $file->getPathname();
-
-            $this->executeWithLock($filePath, function () use ($filePath, $isExpired, &$deletedCount, $context) {
+        foreach ($files as $filePath) {
+            $this->executeWithLock($filePath, function () use ($filePath, $isExpired, &$deletedCount, $context): void {
                 $lines = $this->readAll($filePath, $context);
                 $validLines = [];
 
@@ -410,14 +427,7 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
                     }
                 }
 
-                if (count($validLines) !== count($lines)) {
-                    if (empty($validLines)) {
-                        $this->fileSystem->delete($filePath);
-                        $context->addProcessedFile($filePath);
-                    } else {
-                        $this->rewriteFile($filePath, $validLines);
-                    }
-                }
+                $this->applyCleanupToFile($filePath, $validLines, $context);
             });
         }
 
@@ -426,6 +436,9 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         return $deletedCount;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function cleanByPattern(string $pattern, ?JsonlProcessingContext $context = null): int
     {
         $context ??= new JsonlProcessingContext;
@@ -446,6 +459,9 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         return $deletedCount;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function dryRun(string $basePath, callable $filter, ?JsonlProcessingContext $context = null): array
     {
         $context ??= new JsonlProcessingContext;
@@ -467,6 +483,9 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         return $filesToDelete;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function clear(string $basePath, ?JsonlProcessingContext $context = null): int
     {
         $pattern = rtrim($basePath, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'**'.DIRECTORY_SEPARATOR.'*.jsonl';
@@ -475,9 +494,12 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
     }
 
     // ============================================================
-    // JsonlLockInterface
+    // JsonlLockInterface Implementation
     // ============================================================
 
+    /**
+     * {@inheritDoc}
+     */
     public function acquire(string $filePath, int $timeout = 5): bool
     {
         $lockKey = $this->getLockKey($filePath);
@@ -505,6 +527,9 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function release(string $filePath): void
     {
         $lockKey = $this->getLockKey($filePath);
@@ -516,6 +541,9 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function executeWithLock(string $filePath, callable $callback): mixed
     {
         $this->acquire($filePath);
@@ -527,6 +555,9 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function isLocked(string $filePath): bool
     {
         $lockKey = $this->getLockKey($filePath);
@@ -535,24 +566,38 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
     }
 
     // ============================================================
-    // Méthodes publiques supplémentaires
+    // Public Additional Methods
     // ============================================================
 
+    /**
+     * {@inheritDoc}
+     */
     public function getFilePath(AbstractRecord $entity): string
     {
         return $this->pathStrategy->getFilePath($entity);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function getFilesToScan(AbstractRecord $query): array
     {
         return $this->pathStrategy->getFilesToScan($query);
     }
 
+    /**
+     * Changes the path strategy at runtime.
+     *
+     * Useful for testing or switching behavior dynamically.
+     */
     public function setPathStrategy(JsonlPathStrategyInterface $pathStrategy): void
     {
         $this->pathStrategy = $pathStrategy;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function isExpired(CacheJsonlRecord $record): bool
     {
         $metadata = new CacheJsonlMetadataVO($record);
@@ -560,6 +605,12 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         return $metadata->isExpired();
     }
 
+    /**
+     * Decodes a cached value back to a StrictDataObject.
+     *
+     * @param  string  $encodedValue  JSON encoded value
+     * @param  string  $typeString  Original PHP type (unused, kept for API compatibility)
+     */
     public function decodeCacheValue(string $encodedValue, string $typeString): StrictDataObject
     {
         $decoded = json_decode($encodedValue, true);
@@ -568,9 +619,78 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
     }
 
     // ============================================================
-    // Méthodes privées
+    // Private Helper Methods
     // ============================================================
 
+    /**
+     * Transforms an entity into an array suitable for JSON encoding.
+     *
+     * @throws JsonlException If the entity type is not supported
+     */
+    private function prepareDataForWrite(AbstractRecord $entity): array
+    {
+        if ($entity instanceof CacheJsonlRecord) {
+            return $this->prepareCacheData($entity);
+        }
+
+        if ($entity instanceof LogJsonlRecord) {
+            return $this->prepareLogData($entity);
+        }
+
+        throw new JsonlException('Unsupported record type: '.$entity::class);
+    }
+
+    /**
+     * Prepares cache record data for JSON encoding.
+     */
+    private function prepareCacheData(CacheJsonlRecord $record): array
+    {
+        $decoded = json_decode($record->value, true);
+        $dataObject = new StrictDataObject($decoded);
+        $cacheValue = new CacheValueVO($dataObject);
+
+        return [
+            'key' => $record->key,
+            'value' => $cacheValue->getEncodedValue(),
+            'expires_at' => $record->expires_at?->getValue(),
+        ];
+    }
+
+    /**
+     * Prepares log record data for JSON encoding.
+     */
+    private function prepareLogData(LogJsonlRecord $record): array
+    {
+        return [
+            'time' => $record->time->getValue(),
+            'level' => $record->level,
+            'type' => $record->type,
+            'payload' => $record->payload->toArray(),
+        ];
+    }
+
+    /**
+     * Encodes data to a JSON line with newline terminator.
+     *
+     * @param  array<string, mixed>  $data  Data to encode
+     * @return string JSON line with trailing newline
+     *
+     * @throws JsonlException If JSON encoding fails
+     */
+    private function encodeToJsonLine(array $data): string
+    {
+        $json = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        if ($json === false) {
+            throw new JsonlException('Failed to encode JSON: '.json_last_error_msg());
+        }
+
+        return $json."\n";
+    }
+
+    /**
+     * Ensures the directory for a file path exists, creating it if necessary.
+     */
     private function ensureDirectoryExists(string $filePath): void
     {
         $directory = dirname($filePath);
@@ -580,19 +700,93 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         }
     }
 
+    /**
+     * Flushes the buffer for a single file path.
+     */
+    private function flushSingleBuffer(string $filePath, JsonlProcessingContext $context): void
+    {
+        if (empty($this->buffer[$filePath])) {
+            return;
+        }
+
+        $content = '';
+
+        foreach ($this->buffer[$filePath] as $entity) {
+            $data = $this->prepareDataForWrite($entity);
+            $content .= $this->encodeToJsonLine($data);
+        }
+
+        $this->fileSystem->append($filePath, $content);
+        $count = count($this->buffer[$filePath]);
+        $context->addWrittenLines($filePath, $count);
+
+        $this->buffer[$filePath] = [];
+
+        if ($this->onFlushCallback !== null) {
+            call_user_func($this->onFlushCallback, $filePath, $count);
+        }
+    }
+
+    /**
+     * Finds all JSONL files recursively within a base path.
+     *
+     * @return array<string>
+     */
+    private function findAllJsonlFiles(string $basePath): array
+    {
+        $directory = new \RecursiveDirectoryIterator($basePath, \RecursiveDirectoryIterator::SKIP_DOTS);
+        $iterator = new \RecursiveIteratorIterator($directory);
+        $regex = new \RegexIterator($iterator, '/\.jsonl$/i');
+
+        $files = [];
+
+        foreach ($regex as $file) {
+            $files[] = $file->getPathname();
+        }
+
+        return $files;
+    }
+
+    /**
+     * Applies cleanup to a single file (delete or rewrite).
+     *
+     * @param  array<array<string, mixed>>  $validLines  Lines to keep
+     */
+    private function applyCleanupToFile(string $filePath, array $validLines, JsonlProcessingContext $context): void
+    {
+        if (empty($validLines)) {
+            $this->fileSystem->delete($filePath);
+            $context->addProcessedFile($filePath);
+
+            return;
+        }
+
+        if (count($validLines) !== 0) {
+            $this->rewriteFile($filePath, $validLines);
+        }
+    }
+
+    /**
+     * Rewrites a file with new content (used for removing expired lines).
+     *
+     * @param  array<array<string, mixed>>  $lines  Lines to write
+     */
     private function rewriteFile(string $filePath, array $lines): void
     {
         $tempFile = $filePath.'.tmp';
-
         $content = '';
+
         foreach ($lines as $line) {
-            $content .= json_encode($line, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n";
+            $content .= $this->encodeToJsonLine($line);
         }
 
         $this->fileSystem->put($tempFile, $content);
         $this->fileSystem->move($tempFile, $filePath);
     }
 
+    /**
+     * Generates a unique key for file locking.
+     */
     private function getLockKey(string $filePath): string
     {
         return $filePath;

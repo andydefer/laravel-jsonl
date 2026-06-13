@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace AndyDefer\LaravelJsonl\Tests\Unit;
 
-use AndyDefer\DomainStructures\Enums\PhpType;
 use AndyDefer\DomainStructures\Utils\StrictDataObject;
 use AndyDefer\LaravelJsonl\Contexts\JsonlProcessingContext;
 use AndyDefer\LaravelJsonl\Enums\OperationType;
@@ -175,7 +174,6 @@ final class JsonlServiceTest extends UnitTestCase
         $record = new CacheJsonlRecord(
             key: 'user_123',
             value: $encodedValue,
-            value_type: PhpType::STRING,
             expires_at: new DateTimeVO('+1 hour'),
         );
 
@@ -189,8 +187,7 @@ final class JsonlServiceTest extends UnitTestCase
                 $data = json_decode(trim($content), true);
 
                 return $data['key'] === 'user_123'
-                    && isset($data['value'])
-                    && $data['value_type'] === PhpType::ABSTRACT_DATA_OBJECT->value;
+                    && isset($data['value']);
             }));
 
         // Act
@@ -208,7 +205,6 @@ final class JsonlServiceTest extends UnitTestCase
         $record = new CacheJsonlRecord(
             key: 'session_abc',
             value: $encodedValue,
-            value_type: PhpType::STRING,
             expires_at: null,
         );
 
@@ -771,7 +767,6 @@ final class JsonlServiceTest extends UnitTestCase
         $record = new CacheJsonlRecord(
             key: 'test',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: new DateTimeVO('-1 hour'),
         );
 
@@ -790,7 +785,6 @@ final class JsonlServiceTest extends UnitTestCase
         $record = new CacheJsonlRecord(
             key: 'test',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: new DateTimeVO('+1 hour'),
         );
 
@@ -809,7 +803,6 @@ final class JsonlServiceTest extends UnitTestCase
         $record = new CacheJsonlRecord(
             key: 'test',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: null,
         );
 
@@ -832,7 +825,6 @@ final class JsonlServiceTest extends UnitTestCase
         $record = new CacheJsonlRecord(
             key: 'user_123',
             value: '',
-            value_type: PhpType::STRING,
             expires_at: null,
         );
 
