@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AndyDefer\LaravelJsonl;
 
 use AndyDefer\DomainStructures\Abstracts\AbstractRecord;
+use AndyDefer\DomainStructures\Normalizers\NormalizerChain;
 use AndyDefer\DomainStructures\Utils\StrictDataObject;
 use AndyDefer\LaravelJsonl\Contexts\JsonlContext;
 use AndyDefer\LaravelJsonl\Contexts\JsonlProcessingContext;
@@ -17,9 +18,7 @@ use AndyDefer\LaravelJsonl\Enums\OperationType;
 use AndyDefer\LaravelJsonl\Exceptions\JsonlException;
 use AndyDefer\LaravelJsonl\Exceptions\JsonlLockException;
 use AndyDefer\LaravelJsonl\Records\CacheJsonlRecord;
-use AndyDefer\LaravelJsonl\Records\LogJsonlRecord;
 use AndyDefer\LaravelJsonl\ValueObjects\CacheJsonlMetadataVO;
-use AndyDefer\LaravelJsonl\ValueObjects\CacheValueVO;
 use AndyDefer\LaravelJsonl\ValueObjects\JsonlLockVO;
 use AndyDefer\PhpServices\Contracts\FileSystemInterface;
 use AndyDefer\PhpServices\Enums\PermissionMode;
@@ -637,44 +636,7 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
      */
     private function prepareDataForWrite(AbstractRecord $entity): array
     {
-        if ($entity instanceof CacheJsonlRecord) {
-            return $this->prepareCacheData($entity);
-        }
-
-        if ($entity instanceof LogJsonlRecord) {
-            return $this->prepareLogData($entity);
-        }
-
-        throw new JsonlException('Unsupported record type: '.$entity::class);
-    }
-
-    /**
-     * Prepares cache record data for JSON encoding.
-     */
-    private function prepareCacheData(CacheJsonlRecord $record): array
-    {
-        $decoded = json_decode($record->value, true);
-        $dataObject = new StrictDataObject($decoded);
-        $cacheValue = new CacheValueVO($dataObject);
-
-        return [
-            'key' => $record->key,
-            'value' => $cacheValue->getEncodedValue(),
-            'expires_at' => $record->expires_at?->getValue(),
-        ];
-    }
-
-    /**
-     * Prepares log record data for JSON encoding.
-     */
-    private function prepareLogData(LogJsonlRecord $record): array
-    {
-        return [
-            'time' => $record->time->getValue(),
-            'level' => $record->level,
-            'type' => $record->type,
-            'payload' => $record->payload->toArray(),
-        ];
+        return NormalizerChain::get()->normalize($entity);
     }
 
     /**
