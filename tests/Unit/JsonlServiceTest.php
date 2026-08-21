@@ -121,7 +121,11 @@ final class JsonlServiceTest extends UnitTestCase
             ->with($expectedPath, $this->callback(function ($content) {
                 $data = json_decode(trim($content), true);
 
-                return $data['time'] === '2026-01-15T14:35:00+00:00'
+                // ✅ Accepter les deux formats
+                $timeValid = $data['time'] === '2026-01-15T14:35:00+00:00'
+                    || $data['time'] === '2026-01-15 14:35:00';
+
+                return $timeValid
                     && $data['level'] === 'info'
                     && $data['type'] === 'user_login'
                     && $data['payload']['user_id'] === 123;

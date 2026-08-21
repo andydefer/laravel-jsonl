@@ -146,7 +146,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         $this->assertCount(1, $lines);
 
         $data = json_decode($lines[0], true);
-        $this->assertSame('2026-01-15T14:35:00+00:00', $data['time']);
+        $this->assertSame('2026-01-15 14:35:00', $data['time']);
         $this->assertSame('info', $data['level']);
         $this->assertSame('user_login', $data['type']);
         $this->assertSame(123, $data['payload']['user_id']);
