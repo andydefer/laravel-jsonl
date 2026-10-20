@@ -44,10 +44,25 @@ final class JsonlServiceTest extends UnitTestCase
         $this->temporalStrategy = new TemporalPathStrategy(self::BASE_PATH);
         $this->keyBasedStrategy = new KeyBasedPathStrategy(self::BASE_PATH, 2);
         $this->context = new JsonlContext;
+
+        // Default behaviour for lock handling:
+        //   - no lock file ever exists
+        //   - put() reports a successful write (1 byte, but any int works)
+        // Individual tests that need to assert the lock lifecycle override
+        // these defaults with expects().
+        $this->fileSystem
+            ->method('exists')
+            ->willReturnCallback(
+                fn (string $path): bool => ! str_ends_with($path, '.lock')
+            );
+
+        $this->fileSystem
+            ->method('put')
+            ->willReturn(1);
     }
 
     // ============================================================
-    // Helpers pour créer des services
+    // Helpers
     // ============================================================
 
     private function createTemporalService(): JsonlService
@@ -90,12 +105,11 @@ final class JsonlServiceTest extends UnitTestCase
     }
 
     // ============================================================
-    // Tests pour write() - LogJsonlRecord
+    // Tests for write() - LogJsonlRecord
     // ============================================================
 
     public function test_write_log_record_writes_correct_json_line(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $record = new LogJsonlRecord(
@@ -121,7 +135,6 @@ final class JsonlServiceTest extends UnitTestCase
             ->with($expectedPath, $this->callback(function ($content) {
                 $data = json_decode(trim($content), true);
 
-                // ✅ Accepter les deux formats
                 $timeValid = $data['time'] === '2026-01-15T14:35:00+00:00'
                     || $data['time'] === '2026-01-15 14:35:00';
 
@@ -131,13 +144,11 @@ final class JsonlServiceTest extends UnitTestCase
                     && $data['payload']['user_id'] === 123;
             }));
 
-        // Act
         $service->write($record);
     }
 
     public function test_write_log_record_creates_directory_when_not_exists(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $record = new LogJsonlRecord(
@@ -166,13 +177,11 @@ final class JsonlServiceTest extends UnitTestCase
             ->method('append')
             ->with($expectedPath, $this->anything());
 
-        // Act
         $service->write($record);
     }
 
     public function test_write_log_record_with_custom_directory_permission(): void
     {
-        // Arrange
         $service = $this->createTemporalServiceWithPermission(PermissionMode::PRIVATE_DIRECTORY);
 
         $record = new LogJsonlRecord(
@@ -201,17 +210,15 @@ final class JsonlServiceTest extends UnitTestCase
             ->method('append')
             ->with($expectedPath, $this->anything());
 
-        // Act
         $service->write($record);
     }
 
     // ============================================================
-    // Tests pour write() - CacheJsonlRecord
+    // Tests for write() - CacheJsonlRecord
     // ============================================================
 
     public function test_write_cache_record_writes_correct_json_line(): void
     {
-        // Arrange
         $service = $this->createKeyBasedService();
 
         $cacheValue = new StrictDataObject(['name' => 'John', 'age' => 30]);
@@ -236,13 +243,11 @@ final class JsonlServiceTest extends UnitTestCase
                     && isset($data['value']);
             }));
 
-        // Act
         $service->write($record);
     }
 
     public function test_write_cache_record_without_expiration(): void
     {
-        // Arrange
         $service = $this->createKeyBasedService();
 
         $cacheValue = new StrictDataObject(['name' => 'John']);
@@ -267,17 +272,15 @@ final class JsonlServiceTest extends UnitTestCase
                     && ! isset($data['expires_at']);
             }));
 
-        // Act
         $service->write($record);
     }
 
     // ============================================================
-    // Tests pour write() avec contexte
+    // Tests for write() with processing context
     // ============================================================
 
     public function test_write_updates_context_on_success(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
         $context = new JsonlProcessingContext;
 
@@ -301,10 +304,8 @@ final class JsonlServiceTest extends UnitTestCase
         $this->fileSystem->expects($this->once())
             ->method('append');
 
-        // Act
         $service->write($record, true, $context);
 
-        // Assert
         $this->assertSame(OperationType::COMPLETED, $context->getCurrentOperation());
         $this->assertFalse($context->hasError());
         $this->assertEquals(1, $context->getTotalLinesProcessed());
@@ -314,7 +315,6 @@ final class JsonlServiceTest extends UnitTestCase
 
     public function test_write_updates_context_on_error(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
         $context = new JsonlProcessingContext;
 
@@ -333,15 +333,12 @@ final class JsonlServiceTest extends UnitTestCase
             ->method('append')
             ->willThrowException(new \Exception('Disk full'));
 
-        // Expect
         $this->expectException(JsonlException::class);
         $this->expectExceptionMessage('Disk full');
 
         try {
-            // Act
             $service->write($record, true, $context);
         } finally {
-            // Assert
             $this->assertSame(OperationType::FAILED, $context->getCurrentOperation());
             $this->assertTrue($context->hasError());
             $this->assertSame('Disk full', $context->getLastError());
@@ -349,12 +346,11 @@ final class JsonlServiceTest extends UnitTestCase
     }
 
     // ============================================================
-    // Tests pour write() avec lock
+    // Tests for write() with lock
     // ============================================================
 
     public function test_write_acquires_lock_when_lock_true(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $record = new LogJsonlRecord(
@@ -383,7 +379,8 @@ final class JsonlServiceTest extends UnitTestCase
 
         $this->fileSystem->expects($this->once())
             ->method('put')
-            ->with($lockFile, $this->anything());
+            ->with($lockFile, (string) getmypid())
+            ->willReturn(1);
 
         $this->fileSystem->expects($this->once())
             ->method('append');
@@ -392,13 +389,11 @@ final class JsonlServiceTest extends UnitTestCase
             ->method('delete')
             ->with($lockFile);
 
-        // Act
         $service->write($record, true);
     }
 
     public function test_write_does_not_acquire_lock_when_lock_false(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $record = new LogJsonlRecord(
@@ -422,12 +417,11 @@ final class JsonlServiceTest extends UnitTestCase
         $this->fileSystem->expects($this->never())
             ->method('delete');
 
-        // Act
         $service->write($record, false);
     }
 
     // ============================================================
-    // Tests pour write() - type non supporté
+    // Tests for write() - unsupported record
     // ============================================================
 
     public function test_write_throws_exception_for_unsupported_record_type(): void
@@ -442,12 +436,11 @@ final class JsonlServiceTest extends UnitTestCase
     }
 
     // ============================================================
-    // Tests pour writeBatch()
+    // Tests for writeBatch()
     // ============================================================
 
     public function test_write_batch_writes_multiple_entities(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $records = [
@@ -483,7 +476,6 @@ final class JsonlServiceTest extends UnitTestCase
                 return count($lines) === 2;
             }));
 
-        // Act
         $service->writeBatch($records);
     }
 
@@ -498,7 +490,7 @@ final class JsonlServiceTest extends UnitTestCase
     }
 
     // ============================================================
-    // Tests pour buffer
+    // Tests for buffer
     // ============================================================
 
     public function test_write_buffered_buffers_entities_until_buffer_size_reached(): void
@@ -574,7 +566,7 @@ final class JsonlServiceTest extends UnitTestCase
     }
 
     // ============================================================
-    // Tests pour readAll()
+    // Tests for readAll()
     // ============================================================
 
     public function test_read_all_returns_lines_when_file_exists(): void
@@ -607,7 +599,7 @@ final class JsonlServiceTest extends UnitTestCase
         $service = $this->createTemporalService();
         $filePath = '/test/nonexistent.jsonl';
 
-        $this->fileSystem->expects($this->once())
+        $this->fileSystem
             ->method('exists')
             ->with($filePath)
             ->willReturn(false);
@@ -618,7 +610,7 @@ final class JsonlServiceTest extends UnitTestCase
     }
 
     // ============================================================
-    // Tests pour getFirstLine() et getLastLine()
+    // Tests for getFirstLine() and getLastLine()
     // ============================================================
 
     public function test_get_first_line_returns_first_line_when_file_exists(): void
@@ -688,7 +680,7 @@ final class JsonlServiceTest extends UnitTestCase
     }
 
     // ============================================================
-    // Tests pour search()
+    // Tests for search()
     // ============================================================
 
     public function test_search_returns_filtered_lines(): void
@@ -720,7 +712,7 @@ final class JsonlServiceTest extends UnitTestCase
     }
 
     // ============================================================
-    // Tests pour getFilePath() et getFilesToScan()
+    // Tests for getFilePath() and getFilesToScan()
     // ============================================================
 
     public function test_get_file_path_returns_path_from_strategy(): void
@@ -759,7 +751,7 @@ final class JsonlServiceTest extends UnitTestCase
     }
 
     // ============================================================
-    // Tests pour isExpired()
+    // Tests for isExpired()
     // ============================================================
 
     public function test_is_expired_returns_true_when_record_expired(): void
@@ -808,7 +800,7 @@ final class JsonlServiceTest extends UnitTestCase
     }
 
     // ============================================================
-    // Tests pour setPathStrategy()
+    // Tests for setPathStrategy()
     // ============================================================
 
     public function test_set_path_strategy_changes_strategy(): void

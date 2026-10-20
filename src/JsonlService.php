@@ -30,6 +30,26 @@ use Throwable;
  * This service is stateless. All state (locks, buffer) is managed
  * through the injected JsonlContext.
  *
+ * Locking limitations
+ * -------------------
+ * The lock mechanism uses PID-based liveness checks via `posix_kill`.
+ * It is reliable on a single host with a shared filesystem (local disk
+ * or a POSIX-compliant shared volume). It is NOT reliable in the
+ * following environments:
+ *
+ *  - Containers with PID namespaces: the PID of a process in container A
+ *    does not exist in container B, so a legitimate lock held by A would
+ *    be treated as orphan by B.
+ *  - NFS / CIFS shared volumes between hosts: same issue, plus `flock`
+ *    itself is unreliable on these filesystems.
+ *  - PID reuse: a stale lock whose PID has been recycled by a third
+ *    process will be treated as alive until the timeout, delaying writes.
+ *
+ * For these environments, disable locking (`write(..., lock: false)`) and
+ * rely on an external coordination mechanism (Redis, database lock,
+ * dedicated queue) or use a path strategy that isolates each writer to
+ * its own file.
+ *
  * @author Andy Defer
  */
 class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlReaderInterface, JsonlWriterInterface
@@ -508,6 +528,10 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
         $lockFile = $filePath.'.lock';
 
         while (true) {
+            if ((microtime(true) - $startTime) >= $timeout) {
+                throw new JsonlLockException("Timeout acquiring lock for: {$filePath}");
+            }
+
             if (! $this->fileSystem->exists($lockFile)) {
                 $this->fileSystem->put($lockFile, (string) getmypid());
                 $this->context->addLock($lockKey, new JsonlLockVO(null, $lockFile));
@@ -515,8 +539,13 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
                 return true;
             }
 
-            if ((microtime(true) - $startTime) >= $timeout) {
-                throw new JsonlLockException("Timeout acquiring lock for: {$filePath}");
+            $ownerPid = $this->readLockOwnerPid($lockFile);
+
+            if ($ownerPid <= 0 || ! $this->isProcessAlive($ownerPid)) {
+                $this->deleteLockFileSafely($lockFile);
+                usleep(50000);
+
+                continue;
             }
 
             usleep(50000);
@@ -628,6 +657,77 @@ class JsonlService implements JsonlCleanerInterface, JsonlLockInterface, JsonlRe
     // ============================================================
     // Private Helper Methods
     // ============================================================
+
+    /**
+     * Reads the PID from an existing lock file, tolerating a missing or
+     * empty file (concurrent deletion / partial write).
+     *
+     * Returns 0 when the PID cannot be read, so the caller treats the
+     * lock as orphan.
+     */
+    private function readLockOwnerPid(string $lockFile): int
+    {
+        try {
+            if (! $this->fileSystem->exists($lockFile)) {
+                return 0;
+            }
+
+            $content = trim($this->fileSystem->get($lockFile));
+
+            return $content === '' ? 0 : (int) $content;
+        } catch (Throwable) {
+            return 0;
+        }
+    }
+
+    /**
+     * Deletes the lock file, tolerating a concurrent deletion.
+     *
+     * The TOCTOU window between exists() and delete() is accepted because
+     * delete() is idempotent and only called when we already consider the
+     * lock orphan.
+     */
+    private function deleteLockFileSafely(string $lockFile): void
+    {
+        try {
+            if ($this->fileSystem->exists($lockFile)) {
+                $this->fileSystem->delete($lockFile);
+            }
+        } catch (Throwable) {
+            // Ignore — the next iteration will re-check the timeout.
+        }
+    }
+
+    /**
+     * Checks whether a process is still alive.
+     *
+     * Uses `posix_kill($pid, 0)` which sends no signal and returns true
+     * when the process exists. When the call fails with EPERM, the
+     * process exists but is owned by another user: we must NOT treat it
+     * as dead, otherwise we would delete a legitimate lock held by
+     * another user.
+     *
+     * When the posix extension is unavailable, we conservatively assume
+     * the process is alive so we never delete a legitimate lock.
+     */
+    private function isProcessAlive(int $pid): bool
+    {
+        if ($pid <= 0) {
+            return false;
+        }
+
+        if (! function_exists('posix_kill')) {
+            return true;
+        }
+
+        if (posix_kill($pid, 0)) {
+            return true;
+        }
+
+        // EPERM (errno 1) means the process exists but is owned by
+        // another user: consider it alive.
+        return posix_get_last_error() === 1;
+    }
 
     /**
      * Transforms an entity into an array suitable for JSON encoding.

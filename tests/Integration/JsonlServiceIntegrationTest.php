@@ -7,16 +7,20 @@ namespace AndyDefer\LaravelJsonl\Tests\Integration;
 use AndyDefer\DomainStructures\Enums\PhpType;
 use AndyDefer\DomainStructures\Utils\StrictDataObject;
 use AndyDefer\LaravelJsonl\Contexts\JsonlContext;
+use AndyDefer\LaravelJsonl\Exceptions\JsonlLockException;
 use AndyDefer\LaravelJsonl\JsonlService;
 use AndyDefer\LaravelJsonl\Records\CacheJsonlRecord;
 use AndyDefer\LaravelJsonl\Records\LogJsonlRecord;
 use AndyDefer\LaravelJsonl\Strategies\KeyBasedPathStrategy;
 use AndyDefer\LaravelJsonl\Strategies\TemporalPathStrategy;
 use AndyDefer\LaravelJsonl\Tests\IntegrationTestCase;
+use AndyDefer\PhpServices\Contracts\FileSystemInterface;
 use AndyDefer\PhpServices\Enums\PermissionMode;
 use AndyDefer\PhpServices\Services\FileSystemService;
 use AndyDefer\PhpVo\ValueObjects\DateTimeVO;
+use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 
+#[AllowMockObjectsWithoutExpectations]
 final class JsonlServiceIntegrationTest extends IntegrationTestCase
 {
     private JsonlService $service;
@@ -73,10 +77,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         return $this->fileSystem->get($filePath);
     }
 
-    // ============================================================
-    // Helper pour créer un service avec stratégie temporelle
-    // ============================================================
-
     private function createTemporalService(): JsonlService
     {
         return new JsonlService(
@@ -86,10 +86,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         );
     }
 
-    // ============================================================
-    // Helper pour créer un service avec stratégie par clé
-    // ============================================================
-
     private function createKeyBasedService(): JsonlService
     {
         return new JsonlService(
@@ -98,10 +94,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             context: $this->context,
         );
     }
-
-    // ============================================================
-    // Helper pour créer un service bufferisé
-    // ============================================================
 
     private function createBufferedService(int $bufferSize): JsonlService
     {
@@ -114,12 +106,11 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     }
 
     // ============================================================
-    // Tests pour write() avec LogJsonlRecord
+    // Tests for write() with LogJsonlRecord
     // ============================================================
 
     public function test_write_log_record_creates_file_with_correct_content(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $record = new LogJsonlRecord(
@@ -135,10 +126,8 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             '14.jsonl',
         ]);
 
-        // Act
         $service->write($record);
 
-        // Assert
         $this->assertFileExists($expectedPath);
 
         $content = $this->getFileContent($expectedPath);
@@ -155,7 +144,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
 
     public function test_write_multiple_log_records_appends_to_same_file(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $record1 = new LogJsonlRecord(
@@ -178,11 +166,9 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             '14.jsonl',
         ]);
 
-        // Act
         $service->write($record1);
         $service->write($record2);
 
-        // Assert
         $content = $this->getFileContent($expectedPath);
         $lines = explode("\n", trim($content));
         $this->assertCount(2, $lines);
@@ -196,7 +182,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
 
     public function test_write_log_record_creates_different_files_for_different_days(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $recordDay1 = new LogJsonlRecord(
@@ -225,18 +210,15 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             '14.jsonl',
         ]);
 
-        // Act
         $service->write($recordDay1);
         $service->write($recordDay2);
 
-        // Assert
         $this->assertFileExists($expectedPathDay1);
         $this->assertFileExists($expectedPathDay2);
     }
 
     public function test_write_log_record_creates_different_files_for_different_hours(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $recordHour14 = new LogJsonlRecord(
@@ -265,22 +247,19 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             '15.jsonl',
         ]);
 
-        // Act
         $service->write($recordHour14);
         $service->write($recordHour15);
 
-        // Assert
         $this->assertFileExists($expectedPathHour14);
         $this->assertFileExists($expectedPathHour15);
     }
 
     // ============================================================
-    // Tests pour write() avec CacheJsonlRecord
+    // Tests for write() with CacheJsonlRecord
     // ============================================================
 
     public function test_write_cache_record_creates_file_with_correct_content(): void
     {
-        // Arrange
         $service = $this->createKeyBasedService();
 
         $payload = new StrictDataObject(['name' => 'John Doe', 'email' => 'john@example.com']);
@@ -292,10 +271,8 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             expires_at: null,
         );
 
-        // Act
         $service->write($record);
 
-        // Assert
         $hash = md5('user_123');
         $expectedPath = implode(DIRECTORY_SEPARATOR, [
             $this->tempDir,
@@ -316,7 +293,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
 
     public function test_write_cache_record_with_expiration_creates_file_with_expires_at(): void
     {
-        // Arrange
         $service = $this->createKeyBasedService();
 
         $payload = new StrictDataObject(['name' => 'John Doe']);
@@ -328,10 +304,8 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             expires_at: new DateTimeVO('+1 hour'),
         );
 
-        // Act
         $service->write($record);
 
-        // Assert
         $hash = md5('session_abc');
         $expectedPath = implode(DIRECTORY_SEPARATOR, [
             $this->tempDir,
@@ -351,7 +325,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
 
     public function test_write_cache_record_sanitizes_dangerous_characters_in_key(): void
     {
-        // Arrange
         $service = $this->createKeyBasedService();
 
         $record = new CacheJsonlRecord(
@@ -360,10 +333,8 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             expires_at: null,
         );
 
-        // Act
         $service->write($record);
 
-        // Assert
         $hash = md5('user/with/slashes?and&special@chars');
         $expectedPath = implode(DIRECTORY_SEPARATOR, [
             $this->tempDir,
@@ -376,12 +347,11 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     }
 
     // ============================================================
-    // Tests pour readAll()
+    // Tests for readAll()
     // ============================================================
 
     public function test_read_all_returns_all_lines_from_file(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $filePath = implode(DIRECTORY_SEPARATOR, [
@@ -396,10 +366,8 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             '{"time":"2026-01-15T14:37:00+00:00","level":"warning","type":"test3"}'."\n";
         $this->fileSystem->put($filePath, $content);
 
-        // Act
         $result = $service->readAll($filePath);
 
-        // Assert
         $this->assertCount(3, $result);
         $this->assertSame('info', $result[0]['level']);
         $this->assertSame('debug', $result[1]['level']);
@@ -407,12 +375,11 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     }
 
     // ============================================================
-    // Tests pour getFirstLine() et getLastLine()
+    // Tests for getFirstLine() and getLastLine()
     // ============================================================
 
     public function test_get_first_line_returns_first_line_of_file(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $filePath = implode(DIRECTORY_SEPARATOR, [
@@ -426,17 +393,14 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             '{"time":"2026-01-15T14:36:00+00:00","level":"debug","type":"second"}'."\n";
         $this->fileSystem->put($filePath, $content);
 
-        // Act
         $result = $service->getFirstLine($filePath);
 
-        // Assert
         $this->assertSame('first', $result['type']);
         $this->assertSame('info', $result['level']);
     }
 
     public function test_get_last_line_returns_last_line_of_file(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $filePath = implode(DIRECTORY_SEPARATOR, [
@@ -451,21 +415,18 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             '{"time":"2026-01-15T14:37:00+00:00","level":"error","type":"last"}'."\n";
         $this->fileSystem->put($filePath, $content);
 
-        // Act
         $result = $service->getLastLine($filePath);
 
-        // Assert
         $this->assertSame('last', $result['type']);
         $this->assertSame('error', $result['level']);
     }
 
     // ============================================================
-    // Tests pour search()
+    // Tests for search()
     // ============================================================
 
     public function test_search_returns_lines_matching_filter(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $filePath = implode(DIRECTORY_SEPARATOR, [
@@ -480,24 +441,21 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             '{"time":"2026-01-15T14:37:00+00:00","level":"debug","user":"john"}'."\n";
         $this->fileSystem->put($filePath, $content);
 
-        // Act
         $result = $service->search($filePath, function ($line) {
             return $line['user'] === 'john';
         });
 
-        // Assert
         $this->assertCount(2, $result);
         $this->assertSame('john', $result[0]['user']);
         $this->assertSame('john', $result[1]['user']);
     }
 
     // ============================================================
-    // Tests pour writeBatch()
+    // Tests for writeBatch()
     // ============================================================
 
     public function test_write_batch_writes_multiple_records_at_once(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $records = [
@@ -527,10 +485,8 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             '14.jsonl',
         ]);
 
-        // Act
         $service->writeBatch($records);
 
-        // Assert
         $this->assertFileExists($expectedPath);
 
         $content = $this->getFileContent($expectedPath);
@@ -547,12 +503,11 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     }
 
     // ============================================================
-    // Tests pour buffer
+    // Tests for buffer
     // ============================================================
 
     public function test_buffer_writes_after_reaching_size(): void
     {
-        // Arrange
         $service = $this->createBufferedService(3);
 
         $record = new LogJsonlRecord(
@@ -568,17 +523,13 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             '14.jsonl',
         ]);
 
-        // Act - Écrire 2 records (buffer pas encore flush)
         $service->writeBuffered($record);
         $service->writeBuffered($record);
 
-        // Vérifier que le fichier n'existe pas encore
         $this->assertFileDoesNotExist($expectedPath);
 
-        // Act - 3ème record déclenche le flush
         $service->writeBuffered($record);
 
-        // Assert
         $this->assertFileExists($expectedPath);
 
         $content = $this->getFileContent($expectedPath);
@@ -588,7 +539,6 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
 
     public function test_flush_buffer_writes_pending_records(): void
     {
-        // Arrange
         $service = $this->createBufferedService(10);
 
         $record = new LogJsonlRecord(
@@ -604,17 +554,13 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
             '14.jsonl',
         ]);
 
-        // Act
         $service->writeBuffered($record);
         $service->writeBuffered($record);
 
-        // Vérifier que le fichier n'existe pas encore
         $this->assertFileDoesNotExist($expectedPath);
 
-        // Act - Flush manuel
         $service->flushBuffer();
 
-        // Assert
         $this->assertFileExists($expectedPath);
 
         $content = $this->getFileContent($expectedPath);
@@ -623,12 +569,11 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     }
 
     // ============================================================
-    // Tests pour cleanOlderThan()
+    // Tests for cleanOlderThan()
     // ============================================================
 
     public function test_clean_older_than_deletes_files_older_than_specified_days(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $oldFile = implode(DIRECTORY_SEPARATOR, [
@@ -651,22 +596,19 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         touch($oldFile, strtotime('-31 days'));
         touch($newFile, strtotime('-1 day'));
 
-        // Act
         $deletedCount = $service->cleanOlderThan(30, $this->tempDir);
 
-        // Assert
         $this->assertSame(1, $deletedCount);
         $this->assertFileDoesNotExist($oldFile);
         $this->assertFileExists($newFile);
     }
 
     // ============================================================
-    // Tests pour cleanExpired()
+    // Tests for cleanExpired()
     // ============================================================
 
     public function test_clean_expired_removes_expired_cache_entries(): void
     {
-        // Arrange
         $service = $this->createKeyBasedService();
 
         $payload = new StrictDataObject(['data' => 'test']);
@@ -727,12 +669,11 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     }
 
     // ============================================================
-    // Tests pour cleanByPattern()
+    // Tests for cleanByPattern()
     // ============================================================
 
     public function test_clean_by_pattern_deletes_files_matching_pattern(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $file1 = implode(DIRECTORY_SEPARATOR, [$this->tempDir, '2026-01-15', '14.jsonl']);
@@ -755,12 +696,11 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     }
 
     // ============================================================
-    // Tests pour dryRun()
+    // Tests for dryRun()
     // ============================================================
 
     public function test_dry_run_returns_files_to_delete_without_deleting(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $file1 = implode(DIRECTORY_SEPARATOR, [$this->tempDir, '2026-01-15', '14.jsonl']);
@@ -785,12 +725,11 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     }
 
     // ============================================================
-    // Tests pour clear()
+    // Tests for clear()
     // ============================================================
 
     public function test_clear_deletes_all_jsonl_files_in_directory(): void
     {
-        // Arrange
         $service = $this->createTemporalService();
 
         $file1 = implode(DIRECTORY_SEPARATOR, [$this->tempDir, '2026-01-15', '14.jsonl']);
@@ -811,7 +750,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     }
 
     // ============================================================
-    // Tests pour isExpired()
+    // Tests for isExpired()
     // ============================================================
 
     public function test_is_expired_returns_true_for_expired_record(): void
@@ -860,7 +799,7 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
     }
 
     // ============================================================
-    // Tests pour decodeCacheValue()
+    // Tests for decodeCacheValue()
     // ============================================================
 
     public function test_decode_cache_value_returns_strict_data_object(): void
@@ -876,5 +815,263 @@ final class JsonlServiceIntegrationTest extends IntegrationTestCase
         $this->assertSame('John', $result->name);
         $this->assertSame(30, $result->age);
         $this->assertTrue($result->active);
+    }
+
+    // ============================================================
+    // Lock tests
+    // ============================================================
+
+    public function test_execute_with_lock_acquires_and_releases_the_lock(): void
+    {
+        $service = $this->createTemporalService();
+
+        $filePath = implode(DIRECTORY_SEPARATOR, [
+            $this->tempDir,
+            '2026-01-15',
+            '14.jsonl',
+        ]);
+
+        $this->fileSystem->ensureDirectoryExists(dirname($filePath));
+        $lockFile = $filePath.'.lock';
+
+        $executed = false;
+
+        $service->executeWithLock($filePath, function () use (&$executed, $lockFile): void {
+            $executed = true;
+
+            $this->assertFileExists($lockFile);
+        });
+
+        $this->assertTrue($executed);
+        $this->assertFileDoesNotExist($lockFile);
+    }
+
+    public function test_acquire_returns_true_and_creates_lock_file(): void
+    {
+        $service = $this->createTemporalService();
+
+        $filePath = implode(DIRECTORY_SEPARATOR, [
+            $this->tempDir,
+            '2026-01-15',
+            '14.jsonl',
+        ]);
+
+        $this->fileSystem->ensureDirectoryExists(dirname($filePath));
+
+        $result = $service->acquire($filePath);
+
+        $this->assertTrue($result);
+        $this->assertFileExists($filePath.'.lock');
+
+        $lockPid = (int) $this->fileSystem->get($filePath.'.lock');
+        $this->assertSame(getmypid(), $lockPid);
+
+        $service->release($filePath);
+    }
+
+    public function test_acquire_removes_orphan_lock_from_dead_process(): void
+    {
+        if (! function_exists('posix_kill')) {
+            $this->markTestSkipped('posix extension is required for orphan lock detection.');
+        }
+
+        // Launch a short-lived process and wait for its termination, so its
+        // PID is guaranteed not to exist anymore (deterministic on any Linux).
+        $process = proc_open(
+            ['true'],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+        );
+
+        $this->assertIsResource($process, 'Failed to spawn a helper process.');
+
+        $status = proc_get_status($process);
+        $deadPid = $status['pid'];
+
+        proc_close($process);
+
+        $service = $this->createTemporalService();
+
+        $filePath = implode(DIRECTORY_SEPARATOR, [
+            $this->tempDir,
+            '2026-01-15',
+            '14.jsonl',
+        ]);
+
+        $this->fileSystem->ensureDirectoryExists(dirname($filePath));
+        $this->fileSystem->put($filePath.'.lock', (string) $deadPid);
+
+        $result = $service->acquire($filePath);
+
+        $this->assertTrue($result);
+        $this->assertSame(getmypid(), (int) $this->fileSystem->get($filePath.'.lock'));
+
+        $service->release($filePath);
+    }
+
+    public function test_acquire_throws_timeout_when_lock_is_held_by_living_process(): void
+    {
+        $service = $this->createTemporalService();
+
+        $filePath = implode(DIRECTORY_SEPARATOR, [
+            $this->tempDir,
+            '2026-01-15',
+            '14.jsonl',
+        ]);
+
+        $this->fileSystem->ensureDirectoryExists(dirname($filePath));
+        $this->fileSystem->put($filePath.'.lock', (string) getmypid());
+
+        $this->expectException(JsonlLockException::class);
+        $this->expectExceptionMessage('Timeout acquiring lock for');
+
+        $service->acquire($filePath, timeout: 1);
+    }
+
+    public function test_acquire_returns_immediately_when_lock_is_already_owned(): void
+    {
+        $service = $this->createTemporalService();
+
+        $filePath = implode(DIRECTORY_SEPARATOR, [
+            $this->tempDir,
+            '2026-01-15',
+            '14.jsonl',
+        ]);
+
+        $this->fileSystem->ensureDirectoryExists(dirname($filePath));
+
+        $service->acquire($filePath);
+
+        $start = microtime(true);
+        $result = $service->acquire($filePath, timeout: 5);
+        $elapsed = microtime(true) - $start;
+
+        $this->assertTrue($result);
+        $this->assertLessThan(
+            0.1,
+            $elapsed,
+            'Second acquire() should return immediately since the lock is already held in the context.',
+        );
+
+        $service->release($filePath);
+    }
+
+    public function test_release_removes_lock_file(): void
+    {
+        $service = $this->createTemporalService();
+
+        $filePath = implode(DIRECTORY_SEPARATOR, [
+            $this->tempDir,
+            '2026-01-15',
+            '14.jsonl',
+        ]);
+
+        $this->fileSystem->ensureDirectoryExists(dirname($filePath));
+
+        $service->acquire($filePath);
+        $this->assertFileExists($filePath.'.lock');
+
+        $service->release($filePath);
+
+        $this->assertFileDoesNotExist($filePath.'.lock');
+    }
+
+    public function test_execute_with_lock_releases_lock_on_exception(): void
+    {
+        $service = $this->createTemporalService();
+
+        $filePath = implode(DIRECTORY_SEPARATOR, [
+            $this->tempDir,
+            '2026-01-15',
+            '14.jsonl',
+        ]);
+
+        $this->fileSystem->ensureDirectoryExists(dirname($filePath));
+
+        try {
+            $service->executeWithLock($filePath, function (): void {
+                throw new \RuntimeException('boom');
+            });
+
+            $this->fail('executeWithLock() should have rethrown the exception.');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('boom', $e->getMessage());
+        }
+
+        $this->assertFileDoesNotExist($filePath.'.lock');
+    }
+
+    public function test_acquire_cleans_a_pid_zero_lock_immediately(): void
+    {
+        if (! function_exists('posix_kill')) {
+            $this->markTestSkipped('posix extension is required for orphan lock detection.');
+        }
+
+        $service = $this->createTemporalService();
+
+        $filePath = implode(DIRECTORY_SEPARATOR, [
+            $this->tempDir,
+            '2026-01-15',
+            '14.jsonl',
+        ]);
+
+        $this->fileSystem->ensureDirectoryExists(dirname($filePath));
+        $this->fileSystem->put($filePath.'.lock', '0');
+
+        $start = microtime(true);
+        $result = $service->acquire($filePath, timeout: 2);
+        $elapsed = microtime(true) - $start;
+
+        $this->assertTrue($result);
+        $this->assertLessThan(
+            0.5,
+            $elapsed,
+            'A PID=0 lock must be cleaned immediately, without waiting for the timeout.',
+        );
+        $this->assertSame(
+            getmypid(),
+            (int) $this->fileSystem->get($filePath.'.lock'),
+            'The lock should now belong to the current process.',
+        );
+
+        $service->release($filePath);
+    }
+
+    public function test_acquire_does_not_spin_when_lock_deletion_fails(): void
+    {
+        if (! function_exists('posix_kill')) {
+            $this->markTestSkipped('posix extension is required for orphan lock detection.');
+        }
+
+        $fileSystem = $this->createMock(FileSystemInterface::class);
+
+        // Lock file exists, contains PID 0 (orphan).
+        $fileSystem->method('exists')->willReturn(true);
+        $fileSystem->method('get')->willReturn('0');
+        $fileSystem->method('put')->willReturn(1);
+
+        // Deletion always fails → the lock can never be cleared →
+        // acquire() must stop at the timeout instead of spinning.
+        $fileSystem->method('delete')->willReturn(false);
+
+        $service = new JsonlService(
+            pathStrategy: $this->temporalStrategy,
+            fileSystem: $fileSystem,
+            context: new JsonlContext,
+        );
+
+        $start = microtime(true);
+
+        try {
+            $service->acquire('/test/file.jsonl', timeout: 1);
+
+            $this->fail('acquire() should have thrown JsonlLockException.');
+        } catch (JsonlLockException) {
+            $this->assertLessThan(
+                2.0,
+                microtime(true) - $start,
+                'acquire() must respect its timeout even when delete() fails.',
+            );
+        }
     }
 }
